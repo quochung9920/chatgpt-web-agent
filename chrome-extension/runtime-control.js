@@ -5,6 +5,7 @@ import {
 } from './tab-group-session.js';
 import { AGENT_MODES, normalizeAgentMode } from './agent-policy.js';
 
+const GROUP_CHAT_BINDINGS_KEY = 'agentGroupChatBindings';
 let installed = false;
 
 function isChatGptUrl(url) {
@@ -18,7 +19,46 @@ async function listChatGptTabs() {
     .map(({ id, title, url, active, windowId }) => ({ id, title, url, active, windowId }));
 }
 
-async function resolveChatGptTab(preferredTabId = null) {
+async function getGroupChatBindings() {
+  const stored = await chrome.storage.local.get({ [GROUP_CHAT_BINDINGS_KEY]: {} });
+  const value = stored[GROUP_CHAT_BINDINGS_KEY];
+  return value && typeof value === 'object' ? value : {};
+}
+
+async function saveGroupChatBinding(groupId, tabId) {
+  if (groupId == null || tabId == null) return;
+  const bindings = await getGroupChatBindings();
+  bindings[String(groupId)] = Number(tabId);
+  await chrome.storage.local.set({
+    [GROUP_CHAT_BINDINGS_KEY]: bindings,
+    chatgptTabId: Number(tabId)
+  });
+}
+
+async function removeGroupChatBinding(groupId) {
+  if (groupId == null) return;
+  const bindings = await getGroupChatBindings();
+  if (!(String(groupId) in bindings)) return;
+  delete bindings[String(groupId)];
+  await chrome.storage.local.set({ [GROUP_CHAT_BINDINGS_KEY]: bindings });
+}
+
+async function getBoundChatGptTab(groupId) {
+  if (groupId == null) return null;
+  const bindings = await getGroupChatBindings();
+  const tabId = Number(bindings[String(groupId)] || 0);
+  if (!tabId) return null;
+
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab?.id && isChatGptUrl(tab.url)) return tab;
+  } catch {}
+
+  await removeGroupChatBinding(groupId);
+  return null;
+}
+
+async function resolveChatGptTab(preferredTabId = null, { allowAny = true } = {}) {
   const stored = await chrome.storage.local.get({ chatgptTabId: null });
   const candidates = [preferredTabId, stored.chatgptTabId]
     .filter((value) => value != null)
@@ -34,6 +74,8 @@ async function resolveChatGptTab(preferredTabId = null) {
       }
     } catch {}
   }
+
+  if (!allowAny) return null;
 
   const tabs = await listChatGptTabs();
   if (!tabs.length) return null;
@@ -71,9 +113,9 @@ async function sendChatBridge(tabId, message) {
   }
 }
 
-async function chatGptStatus(preferredTabId = null, { includeConversation = true } = {}) {
+async function chatGptStatus(preferredTabId = null, { includeConversation = true, allowAny = true } = {}) {
   const tabs = await listChatGptTabs();
-  const tab = await resolveChatGptTab(preferredTabId);
+  const tab = await resolveChatGptTab(preferredTabId, { allowAny });
   if (!tab) {
     return {
       open: false,
@@ -88,7 +130,7 @@ async function chatGptStatus(preferredTabId = null, { includeConversation = true
     const bridge = await sendChatBridge(tab.id, { type: 'chatgpt.bridge.ping' });
     return {
       open: true,
-      tabs,
+      tabs: await listChatGptTabs(),
       selectedTabId: tab.id,
       selectedTitle: tab.title || 'ChatGPT',
       selectedUrl: tab.url,
@@ -99,7 +141,7 @@ async function chatGptStatus(preferredTabId = null, { includeConversation = true
   } catch (error) {
     return {
       open: true,
-      tabs,
+      tabs: await listChatGptTabs(),
       selectedTabId: tab.id,
       selectedTitle: tab.title || 'ChatGPT',
       selectedUrl: tab.url,
@@ -110,32 +152,116 @@ async function chatGptStatus(preferredTabId = null, { includeConversation = true
   }
 }
 
-async function createChatGptTab(active = false) {
-  const tab = await chrome.tabs.create({ url: 'https://chatgpt.com/', active: Boolean(active) });
+async function createChatGptTab(active = false, windowId = null) {
+  const createProperties = {
+    url: 'https://chatgpt.com/',
+    active: Boolean(active)
+  };
+  if (Number.isInteger(Number(windowId)) && Number(windowId) >= 0) {
+    createProperties.windowId = Number(windowId);
+  }
+
+  const tab = await chrome.tabs.create(createProperties);
   if (!tab?.id) throw new Error('chatgpt_tab_create_failed');
+
+  // The reasoning tab must remain outside the Agent Tab Group.
+  try {
+    const refreshed = await chrome.tabs.get(tab.id);
+    if (Number(refreshed.groupId) >= 0) await chrome.tabs.ungroup(tab.id);
+  } catch {}
+
   await chrome.storage.local.set({ chatgptTabId: tab.id });
   await waitForTabReady(tab.id);
-  return chatGptStatus(tab.id);
+  return chrome.tabs.get(tab.id);
+}
+
+export async function ensureChatGptForGroup(groupId, {
+  forceNew = false,
+  active = false,
+  windowId = null
+} = {}) {
+  if (groupId == null) throw new Error('agent_group_id_required');
+
+  if (!forceNew) {
+    const bound = await getBoundChatGptTab(groupId);
+    if (bound?.id) {
+      await chrome.storage.local.set({ chatgptTabId: bound.id });
+      return chatGptStatus(bound.id, { allowAny: false });
+    }
+  }
+
+  const tab = await createChatGptTab(active, windowId);
+  await saveGroupChatBinding(groupId, tab.id);
+  return chatGptStatus(tab.id, { allowAny: false });
+}
+
+async function statusForCurrentGroup(preferredTabId = null, includeConversation = true) {
+  if (preferredTabId != null) {
+    return chatGptStatus(preferredTabId, { includeConversation });
+  }
+
+  const group = await getAgentGroupStatus().catch(() => null);
+  if (group?.active && group.groupId != null) {
+    return ensureChatGptForGroup(group.groupId, {
+      forceNew: false,
+      active: false,
+      windowId: group.windowId
+    });
+  }
+
+  return chatGptStatus(null, { includeConversation });
+}
+
+async function createChatForCurrentGroup(active = false) {
+  const group = await getAgentGroupStatus().catch(() => null);
+  const tab = await createChatGptTab(active, group?.windowId ?? null);
+  if (group?.active && group.groupId != null) {
+    await saveGroupChatBinding(group.groupId, tab.id);
+  }
+  return chatGptStatus(tab.id, { allowAny: false });
 }
 
 async function selectChatGptTab(tabId) {
   const tab = await chrome.tabs.get(Number(tabId));
   if (!tab?.id || !isChatGptUrl(tab.url)) throw new Error('not_a_chatgpt_tab');
   await chrome.storage.local.set({ chatgptTabId: tab.id });
-  return chatGptStatus(tab.id);
+
+  const group = await getAgentGroupStatus().catch(() => null);
+  if (group?.active && group.groupId != null) {
+    await saveGroupChatBinding(group.groupId, tab.id);
+  }
+
+  return chatGptStatus(tab.id, { allowAny: false });
 }
 
 async function openChatGptTab() {
-  let tab = await resolveChatGptTab();
-  if (!tab) return createChatGptTab(true);
+  const group = await getAgentGroupStatus().catch(() => null);
+  let tab = null;
+
+  if (group?.active && group.groupId != null) {
+    tab = await getBoundChatGptTab(group.groupId);
+    if (!tab) {
+      const created = await ensureChatGptForGroup(group.groupId, {
+        active: false,
+        windowId: group.windowId
+      });
+      if (created?.selectedTabId) tab = await chrome.tabs.get(created.selectedTabId);
+    }
+  }
+
+  if (!tab) tab = await resolveChatGptTab();
+  if (!tab) {
+    tab = await createChatGptTab(false, group?.windowId ?? null);
+    if (group?.active && group.groupId != null) await saveGroupChatBinding(group.groupId, tab.id);
+  }
+
   await chrome.tabs.update(tab.id, { active: true });
   await chrome.windows.update(tab.windowId, { focused: true });
-  tab = await chrome.tabs.get(tab.id);
-  return chatGptStatus(tab.id);
+  return chatGptStatus(tab.id, { allowAny: false });
 }
 
 async function syncChatGpt(tabId, limit = 40) {
-  const tab = await resolveChatGptTab(tabId);
+  const tab = await resolveChatGptTab(tabId, { allowAny: true });
   if (!tab) throw new Error('chatgpt_tab_not_found');
   const response = await sendChatBridge(tab.id, {
     type: 'chatgpt.bridge.sync',
@@ -162,11 +288,11 @@ async function setPermissionMode(mode) {
 async function handleChatGptMessage(message) {
   switch (message.type) {
     case 'chatgpt.status':
-      return chatGptStatus(message.tabId, { includeConversation: message.includeConversation !== false });
+      return statusForCurrentGroup(message.tabId, message.includeConversation !== false);
     case 'chatgpt.sync':
       return syncChatGpt(message.tabId, message.limit);
     case 'chatgpt.new':
-      return createChatGptTab(Boolean(message.active));
+      return createChatForCurrentGroup(Boolean(message.active));
     case 'chatgpt.open':
       return openChatGptTab();
     case 'chatgpt.select':
