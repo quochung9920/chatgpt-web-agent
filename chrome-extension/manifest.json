@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Web Agent",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Use your existing ChatGPT web session as an observe-act-verify Chrome agent sandboxed to a dedicated tab group.",
   "permissions": ["tabs", "tabGroups", "activeTab", "scripting", "storage", "debugger", "sidePanel"],
   "host_permissions": ["<all_urls>"],
-  "background": { "service_worker": "service-worker.js", "type": "module" },
+  "background": { "service_worker": "service-worker-entry.js", "type": "module" },
   "options_page": "options.html",
   "side_panel": { "default_path": "sidepanel.html" },
-  "action": { "default_title": "Open ChatGPT Web Agent" }
+  "action": { "default_title": "Start ChatGPT Web Agent on this website" }
 }
