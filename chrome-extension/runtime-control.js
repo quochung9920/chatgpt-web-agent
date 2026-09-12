@@ -7,7 +7,28 @@ import { AGENT_MODES, normalizeAgentMode } from './agent-policy.js';
 
 const GROUP_CHAT_BINDINGS_KEY = 'agentGroupChatBindings';
 const groupChatCreationLocks = new Map();
+const bootStartedAt = Date.now();
+const bootModules = new Map([['runtime-control', { status: 'ready', at: bootStartedAt, error: '' }]]);
 let installed = false;
+
+export function reportRuntimeModule(name, status, error = '') {
+  const key = String(name || 'unknown');
+  bootModules.set(key, {
+    status: String(status || 'unknown'),
+    at: Date.now(),
+    error: error ? String(error).slice(0, 2000) : ''
+  });
+}
+
+function runtimeHealth() {
+  return {
+    ok: true,
+    worker: 'ready',
+    startedAt: bootStartedAt,
+    uptimeMs: Math.max(0, Date.now() - bootStartedAt),
+    modules: Object.fromEntries(bootModules.entries())
+  };
+}
 
 function isChatGptUrl(url) {
   return /^https:\/\/(chatgpt\.com|chat\.openai\.com)\//i.test(String(url || ''));
@@ -370,6 +391,10 @@ function handleRuntimeMessage(message, _sender, sendResponse) {
   if (!type || type === 'agent.event') return;
 
   let handler = null;
+  if (type === 'runtime.health') {
+    sendResponse({ ok: true, result: runtimeHealth() });
+    return;
+  }
   if (type.startsWith('chatgpt.')) handler = handleChatGptMessage;
   else if (type.startsWith('agent.group.') || type.startsWith('agent.mode.') || type === 'agent.state') {
     handler = handleAgentControlMessage;
