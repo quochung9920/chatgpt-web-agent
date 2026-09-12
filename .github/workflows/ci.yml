@@ -45,6 +45,7 @@ jobs:
           node --check chrome-extension/options.js
           node --check chrome-extension/sidepanel.js
           node --check chrome-extension/stream-model-ui.js
+          node --check chrome-extension/runtime-health-ui.js
           node --check chrome-extension/service-worker-smoke.mjs
 
       - name: Smoke test service worker startup and control messages
