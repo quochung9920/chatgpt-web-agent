@@ -266,6 +266,7 @@ app.patch('/v1/targets/:id', requireApiKey, async (req, res) => {
 function normalizeViewport(viewport) {
   if (!viewport) return null;
   return {
+    label: viewport.label ? String(viewport.label).slice(0, 60) : null,
     width: clampNumber(viewport.width, 240, 3840, 1440),
     height: clampNumber(viewport.height, 320, 2160, 900),
     deviceScaleFactor: clampNumber(viewport.deviceScaleFactor, 0.5, 4, 1),
@@ -315,6 +316,7 @@ async function captureObservation(input = {}) {
   const observation = {
     targetId: target?.id || null,
     capturedAt: new Date().toISOString(),
+    requestedViewport: viewport,
     page,
     elements,
     debug,
@@ -326,6 +328,7 @@ async function captureObservation(input = {}) {
       status: 'verifying',
       lastObservation: {
         capturedAt: observation.capturedAt,
+        requestedViewport: viewport,
         page: {
           url: page.url,
           title: page.title,
@@ -382,6 +385,9 @@ async function fetchReferenceImage(urlString) {
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
     const response = await fetch(url, { redirect: 'follow', signal: controller.signal });
+    const finalUrl = new URL(response.url);
+    if (finalUrl.protocol !== 'https:') throw new Error('reference_redirect_must_be_https');
+    if (!hostAllowed(finalUrl.hostname)) throw new Error('reference_redirect_host_not_allowed');
     if (!response.ok) throw new Error(`reference_http_${response.status}`);
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.startsWith('image/')) throw new Error('reference_not_image');
@@ -456,6 +462,17 @@ async function compareImages(referenceBuffer, candidateBuffer, includeDiff = fal
   };
 }
 
+function resolveViewportResultKey(target, requestedViewport, observedViewport) {
+  const requested = requestedViewport || {};
+  if (requested.label) return requested.label;
+
+  const width = Number(requested.width || observedViewport?.width || 0);
+  const height = Number(requested.height || observedViewport?.height || 0);
+  const match = (target?.viewports || []).find((viewport) => viewport.width === width && viewport.height === height);
+  if (match?.label) return match.label;
+  return width && height ? `${width}x${height}` : 'default';
+}
+
 app.post('/v1/verification/compare', requireApiKey, async (req, res) => {
   try {
     const body = req.body || {};
@@ -465,9 +482,12 @@ app.post('/v1/verification/compare', requireApiKey, async (req, res) => {
       if (!target) return res.status(404).json({ error: 'target_not_found' });
     }
 
+    const captureInput = body.capture
+      ? { ...body.capture, targetId: body.capture.targetId || body.targetId || null }
+      : body;
     const observation = body.candidateDataUrl
       ? null
-      : await captureObservation(body.capture || body);
+      : await captureObservation(captureInput);
     const candidateDataUrl = body.candidateDataUrl || observation?.screenshot?.dataUrl;
     const candidateBuffer = decodeImageDataUrl(candidateDataUrl);
 
@@ -479,13 +499,39 @@ app.post('/v1/verification/compare', requireApiKey, async (req, res) => {
     else return res.status(400).json({ error: 'reference_image_required' });
 
     const comparison = await compareImages(referenceBuffer, candidateBuffer, Boolean(body.includeDiff));
+    const passThreshold = clampNumber(body.passThreshold, 0, 1, 0.92);
+    let targetState = null;
 
     if (target) {
-      await updateTarget(target.id, {
-        status: comparison.similarity >= Number(body.passThreshold || 0.92) ? 'complete' : 'repairing',
+      const requestedViewport = observation?.requestedViewport
+        || normalizeViewport(body.capture?.viewport || body.viewport || target.viewports?.[0]);
+      const resultKey = resolveViewportResultKey(target, requestedViewport, observation?.page?.viewport);
+      const verificationResults = { ...(target.verificationResults || {}) };
+      const currentPass = comparison.similarity >= passThreshold;
+
+      verificationResults[resultKey] = {
+        label: resultKey,
+        width: requestedViewport?.width || observation?.page?.viewport?.width || comparison.candidate.width,
+        height: requestedViewport?.height || observation?.page?.viewport?.height || comparison.candidate.height,
+        similarity: comparison.similarity,
+        differentPixelRatio: comparison.differentPixelRatio,
+        passThreshold,
+        pass: currentPass,
+        comparedAt: new Date().toISOString()
+      };
+
+      const requiredLabels = (target.viewports || []).map((viewport) => viewport.label);
+      const allRequiredPass = requiredLabels.length > 0
+        && requiredLabels.every((label) => verificationResults[label]?.pass === true);
+      const nextStatus = allRequiredPass ? 'complete' : currentPass ? 'verifying' : 'repairing';
+
+      targetState = await updateTarget(target.id, {
+        status: nextStatus,
+        verificationResults,
         lastObservation: {
           ...(target.lastObservation || {}),
           comparedAt: new Date().toISOString(),
+          viewport: resultKey,
           similarity: comparison.similarity,
           differentPixelRatio: comparison.differentPixelRatio,
           candidateDimensions: comparison.candidate,
@@ -497,9 +543,12 @@ app.post('/v1/verification/compare', requireApiKey, async (req, res) => {
     res.json({
       ok: true,
       targetId: target?.id || null,
+      targetStatus: targetState?.status || null,
+      verificationResults: targetState?.verificationResults || null,
       comparison,
       observation: observation ? {
         capturedAt: observation.capturedAt,
+        requestedViewport: observation.requestedViewport,
         page: observation.page,
         elements: observation.elements,
         debug: observation.debug,
