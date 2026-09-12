@@ -12,10 +12,14 @@ function isChatGptUrl(url) {
   return /^https:\/\/(chatgpt\.com|chat\.openai\.com)\//i.test(String(url || ''));
 }
 
+function isChatGptSessionUrl(url) {
+  return isChatGptUrl(url) || /^https:\/\/auth\.openai\.com\//i.test(String(url || ''));
+}
+
 async function listChatGptTabs() {
   const tabs = await chrome.tabs.query({});
   return tabs
-    .filter((tab) => tab?.id && isChatGptUrl(tab.url))
+    .filter((tab) => tab?.id && isChatGptSessionUrl(tab.url))
     .map(({ id, title, url, active, windowId }) => ({ id, title, url, active, windowId }));
 }
 
@@ -51,7 +55,7 @@ async function getBoundChatGptTab(groupId) {
 
   try {
     const tab = await chrome.tabs.get(tabId);
-    if (tab?.id && isChatGptUrl(tab.url)) return tab;
+    if (tab?.id && isChatGptSessionUrl(tab.url)) return tab;
   } catch {}
 
   await removeGroupChatBinding(groupId);
@@ -68,7 +72,7 @@ async function resolveChatGptTab(preferredTabId = null, { allowAny = true } = {}
   for (const id of candidates) {
     try {
       const tab = await chrome.tabs.get(id);
-      if (tab?.id && isChatGptUrl(tab.url)) {
+      if (tab?.id && isChatGptSessionUrl(tab.url)) {
         await chrome.storage.local.set({ chatgptTabId: tab.id });
         return tab;
       }
@@ -89,7 +93,7 @@ async function waitForTabReady(tabId, timeoutMs = 20000) {
   while (Date.now() < deadline) {
     try {
       const tab = await chrome.tabs.get(Number(tabId));
-      if (tab.status === 'complete' && isChatGptUrl(tab.url)) return tab;
+      if (tab.status === 'complete' && isChatGptSessionUrl(tab.url)) return tab;
     } catch {
       throw new Error('chatgpt_tab_closed');
     }
@@ -123,6 +127,19 @@ async function chatGptStatus(preferredTabId = null, { includeConversation = true
       selectedTabId: null,
       bridgeReady: false,
       conversation: []
+    };
+  }
+
+  if (!isChatGptUrl(tab.url)) {
+    return {
+      open: true,
+      tabs: await listChatGptTabs(),
+      selectedTabId: tab.id,
+      selectedTitle: tab.title || 'ChatGPT sign in',
+      selectedUrl: tab.url,
+      bridgeReady: false,
+      conversation: [],
+      error: 'chatgpt_sign_in_required'
     };
   }
 
@@ -164,7 +181,6 @@ async function createChatGptTab(active = false, windowId = null) {
   const tab = await chrome.tabs.create(createProperties);
   if (!tab?.id) throw new Error('chatgpt_tab_create_failed');
 
-  // The reasoning tab must remain outside the Agent Tab Group.
   try {
     const refreshed = await chrome.tabs.get(tab.id);
     if (Number(refreshed.groupId) >= 0) await chrome.tabs.ungroup(tab.id);
@@ -223,7 +239,7 @@ async function createChatForCurrentGroup(active = false) {
 
 async function selectChatGptTab(tabId) {
   const tab = await chrome.tabs.get(Number(tabId));
-  if (!tab?.id || !isChatGptUrl(tab.url)) throw new Error('not_a_chatgpt_tab');
+  if (!tab?.id || !isChatGptSessionUrl(tab.url)) throw new Error('not_a_chatgpt_tab');
   await chrome.storage.local.set({ chatgptTabId: tab.id });
 
   const group = await getAgentGroupStatus().catch(() => null);
@@ -262,7 +278,7 @@ async function openChatGptTab() {
 
 async function syncChatGpt(tabId, limit = 40) {
   const tab = await resolveChatGptTab(tabId, { allowAny: true });
-  if (!tab) throw new Error('chatgpt_tab_not_found');
+  if (!tab || !isChatGptUrl(tab.url)) throw new Error('chatgpt_tab_not_ready');
   const response = await sendChatBridge(tab.id, {
     type: 'chatgpt.bridge.sync',
     limit: Math.min(Math.max(Number(limit || 40), 1), 50)
