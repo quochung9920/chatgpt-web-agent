@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Web Agent",
-  "version": "0.1.0",
-  "description": "Connects a user-approved Chrome session to the ChatGPT Web Agent control server.",
-  "permissions": ["tabs", "activeTab", "scripting", "storage"],
+  "version": "0.2.0",
+  "description": "Connects a user-approved Chrome session to ChatGPT for browser automation, inspection, and visual QA.",
+  "permissions": ["tabs", "activeTab", "scripting", "storage", "debugger"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js", "type": "module" },
   "options_page": "options.html",
