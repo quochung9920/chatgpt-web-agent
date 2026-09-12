@@ -28,9 +28,24 @@ function isChatGptUrl(url) {
   return /^https:\/\/(chatgpt\.com|chat\.openai\.com)\//i.test(String(url || ''));
 }
 
+function sanitizeForPrompt(value, depth = 0) {
+  if (depth > 8) return '[MAX_DEPTH]';
+  if (typeof value === 'string') {
+    if (/^data:[^,]+,/i.test(value)) return '[DATA_URL_OMITTED]';
+    return value;
+  }
+  if (Array.isArray(value)) return value.slice(0, 60).map((item) => sanitizeForPrompt(item, depth + 1));
+  if (value && typeof value === 'object') {
+    const output = {};
+    for (const [key, item] of Object.entries(value).slice(0, 120)) output[key] = sanitizeForPrompt(item, depth + 1);
+    return output;
+  }
+  return value;
+}
+
 function safeJson(value, maxLength = 12000) {
   let text;
-  try { text = JSON.stringify(value, null, 2); }
+  try { text = JSON.stringify(sanitizeForPrompt(value), null, 2); }
   catch { text = JSON.stringify({ error: 'unserializable_result' }); }
   return text.length > maxLength ? `${text.slice(0, maxLength)}\n...TRUNCATED...` : text;
 }
@@ -184,9 +199,7 @@ async function typeAt(tabId, args = {}) {
   if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('coordinates_required');
   const text = String(args.text ?? '');
   await executeAgentTool('page.click', { tabId, x, y });
-  if (args.clear) {
-    await executeAgentTool('page.hotkey', { tabId, keys: ['CTRL', 'A'] });
-  }
+  if (args.clear) await executeAgentTool('page.hotkey', { tabId, keys: ['CTRL', 'A'] });
   try {
     await chrome.debugger.sendCommand({ tabId: Number(tabId) }, 'Input.insertText', { text });
   } catch {
@@ -206,7 +219,6 @@ async function executeHybridTool(tool, args, state) {
   if ((tool.startsWith('page.') || ['tab.navigate', 'tab.reload', 'tab.back', 'tab.forward'].includes(tool)) && next.tabId == null) {
     next.tabId = state.workingTabId;
   }
-
   if (next.tabId != null) await assertTabInAgentGroup(next.tabId);
 
   if (tool === 'page.look') return lookAtTab(next.tabId, next);
@@ -235,6 +247,15 @@ async function riskTarget(tool, args = {}) {
     }
   } catch {}
   return null;
+}
+
+function riskContextFor(state, tool, args, target) {
+  const coordinateAction = ['page.click', 'page.doubleClick', 'page.rightClick', 'page.typeAt'].includes(tool)
+    && Number.isFinite(Number(args.x))
+    && Number.isFinite(Number(args.y));
+  const targetText = String(target?.text || target?.label || target?.attributes?.['aria-label'] || '').trim();
+  if (coordinateAction && !targetText) return { target, taskIntent: state.task };
+  return target;
 }
 
 async function waitForApproval(state, tool, args, classification, target) {
@@ -277,7 +298,7 @@ async function executeOneAction(state, action) {
   const args = { ...(action.args || {}) };
   if ((tool.startsWith('page.') || ['tab.navigate', 'tab.reload', 'tab.back', 'tab.forward'].includes(tool)) && args.tabId == null) args.tabId = state.workingTabId;
   const target = await riskTarget(tool, args);
-  const classification = classifyAgentAction(tool, args, { task: state.task, target });
+  const classification = classifyAgentAction(tool, args, riskContextFor(state, tool, args, target));
   const permission = decideAgentPermission(state.permissionMode, classification);
 
   if (permission.decision === 'block') {
@@ -320,10 +341,21 @@ async function executeOneAction(state, action) {
   }
 }
 
-function actionMutates(action) {
+function actionNeedsVisual(action) {
   if (!action?.tool) return false;
-  if (['page.look', 'page.peekDom', 'page.find', 'page.observe', 'page.screenshot'].includes(action.tool)) return false;
-  return isMutatingTool(action.tool) || ['page.typeAt', 'tabs.open', 'tabs.close', 'tab.navigate', 'tab.reload', 'tab.back', 'tab.forward'].includes(action.tool);
+  const tool = String(action.tool);
+  if (['page.look', 'page.peekDom', 'page.find', 'page.observe', 'page.screenshot', 'page.read', 'page.accessibility', 'page.inspect', 'page.elements', 'page.elementAt'].includes(tool)) return false;
+  if (['tabs.switch', 'tabs.open', 'tab.navigate', 'tab.reload', 'tab.back', 'tab.forward', 'page.scroll', 'page.hover'].includes(tool)) return true;
+  return isMutatingTool(tool) || tool === 'page.typeAt';
+}
+
+function imageFromResults(results) {
+  for (const item of [...results].reverse()) {
+    if (!item?.ok) continue;
+    if (item.tool === 'page.look' && item.result?.screenshot?.dataUrl) return item.result.screenshot.dataUrl;
+    if (item.tool === 'page.screenshot' && item.result?.dataUrl) return item.result.dataUrl;
+  }
+  return '';
 }
 
 function describeHybridTools() {
@@ -335,7 +367,7 @@ function initialPrompt(state, tabs, look) {
 }
 
 function resultPrompt(state, results, verification) {
-  return `[WEB_AGENT_RESULT]\nModel round: ${state.modelRound}\nBrowser steps used: ${state.browserSteps}/${MAX_BROWSER_STEPS}\nResults:\n${safeJson(results, 12000)}\n\nPOST-ACTION VIEW\n${verification ? `${safeJson(verification.data, 4000)}\nScreenshot: ${verification.imageDataUrl ? 'ATTACHED' : 'unavailable'}` : 'No new screenshot was required.'}\n\nContinue the same user task. Prefer a small deterministic batch when safe. If you need visual evidence, use page.look or act from the attached post-action screenshot. Finish only after the requested outcome is verified.`;
+  return `[WEB_AGENT_RESULT]\nModel round: ${state.modelRound}\nBrowser steps used: ${state.browserSteps}/${MAX_BROWSER_STEPS}\nResults:\n${safeJson(results, 12000)}\n\nPOST-ACTION VIEW\n${verification ? `${safeJson(verification.data, 4000)}\nScreenshot: ${verification.imageDataUrl ? 'ATTACHED' : 'unavailable'}` : 'No automatic screenshot was required.'}\n\nContinue the same user task. Prefer a small deterministic batch when safe. If you need visual evidence, use page.look or act from the attached post-action screenshot. Finish only after the requested outcome is verified.`;
 }
 
 async function runHybridTask(message) {
@@ -412,7 +444,7 @@ async function runHybridTask(message) {
         if (state.cancelled) throw new Error('agent_stopped');
         const result = await executeOneAction(state, action);
         results.push(result);
-        if (actionMutates(action)) needsVisualVerify = true;
+        if (actionNeedsVisual(action)) needsVisualVerify = true;
         if (!result.ok) break;
       }
 
@@ -421,8 +453,14 @@ async function runHybridTask(message) {
         await emit({ runId: state.runId, kind: 'observe', message: 'Verifying with a fresh screenshot' });
         verification = lookForModel(await lookAtTab(state.workingTabId));
       } else {
-        const lookResult = results.find((item) => item.tool === 'page.look' && item.ok)?.result;
-        if (lookResult) verification = lookForModel(lookResult);
+        const directImage = imageFromResults(results);
+        if (directImage) {
+          const tab = await chrome.tabs.get(Number(state.workingTabId));
+          verification = {
+            data: { tab: { id: tab.id, title: tab.title || '', url: tab.url || '' }, screenshot: { dataUrl: '[SCREENSHOT_ATTACHED]' } },
+            imageDataUrl: directImage
+          };
+        }
       }
 
       await saveRunState(state);
