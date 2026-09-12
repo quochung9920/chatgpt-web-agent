@@ -11,61 +11,66 @@
     <header class="topbar">
       <div class="brand">
         <div class="brand-mark">A</div>
-        <div>
+        <div class="brand-copy">
           <div class="brand-title">ChatGPT Web Agent</div>
-          <div class="brand-subtitle">Chrome browser agent</div>
+          <div id="connectionLine" class="brand-subtitle">Connecting…</div>
         </div>
       </div>
       <button id="settings" class="icon-button" title="Settings" aria-label="Settings">⚙</button>
     </header>
 
-    <section class="status-card">
-      <div class="status-row">
+    <section class="connection-bar" aria-label="Connection status">
+      <div class="connection-item">
         <span id="statusDot" class="status-dot checking"></span>
-        <div>
-          <div id="statusText" class="status-title">Checking server…</div>
-          <div id="statusDetail" class="muted">Waiting for connection status</div>
-        </div>
+        <span id="statusText">Server</span>
       </div>
-      <div class="actions compact-actions">
-        <button id="refresh" class="secondary">Refresh</button>
-        <button id="reconnect" class="secondary">Reconnect</button>
+      <div class="connection-item">
+        <span id="chatgptDot" class="status-dot checking"></span>
+        <span id="chatgptBadge">ChatGPT</span>
+      </div>
+      <button id="refresh" class="text-button">Refresh</button>
+    </section>
+
+    <section class="context-card">
+      <div class="context-label">Working on</div>
+      <div id="tabTitle" class="context-title">Loading current tab…</div>
+      <div id="tabUrl" class="context-url">—</div>
+    </section>
+
+    <section class="chat-session-bar">
+      <select id="chatgptTabSelect" aria-label="ChatGPT conversation tab">
+        <option value="">Finding ChatGPT…</option>
+      </select>
+      <button id="newChat" class="secondary small">New chat</button>
+      <button id="openChatgpt" class="secondary small">Open tab</button>
+    </section>
+
+    <section id="chatArea" class="chat-area" aria-live="polite">
+      <div id="emptyState" class="empty-state">
+        <div class="empty-icon">✦</div>
+        <div class="empty-title">Chat in the extension</div>
+        <p>Your existing ChatGPT login stays in Chrome. Messages typed here are relayed to the selected ChatGPT tab and the answer is shown here.</p>
+      </div>
+      <div id="messages" class="messages"></div>
+      <div id="thinking" class="thinking hidden">
+        <span></span><span></span><span></span>
+        <em>ChatGPT is responding…</em>
       </div>
     </section>
 
-    <section class="section">
-      <div class="section-label">Current tab</div>
-      <div class="tab-card">
-        <div id="tabTitle" class="tab-title">Loading…</div>
-        <div id="tabUrl" class="tab-url">—</div>
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="section-head">
-        <div class="section-label">ChatGPT session</div>
-        <span id="chatgptBadge" class="badge">Checking</span>
-      </div>
-      <div class="session-card">
-        <p id="chatgptText" class="muted">Looking for an existing chatgpt.com tab in this Chrome profile.</p>
-        <button id="openChatgpt" class="primary">Open ChatGPT</button>
-      </div>
-    </section>
-
-    <section class="section grow">
-      <div class="section-label">Agent capabilities</div>
-      <div class="capabilities">
-        <span>DOM</span><span>Accessibility</span><span>Vision</span><span>Click</span><span>Type</span><span>Drag</span><span>Upload</span><span>Screenshot</span><span>Console</span><span>Network</span>
-      </div>
-      <div class="activity-card">
-        <div class="activity-title">Ready for browser tasks</div>
-        <div class="muted">This panel stays beside the page while the agent works, similar to a browser assistant sidebar.</div>
+    <section class="composer-shell">
+      <div id="chatError" class="chat-error hidden"></div>
+      <textarea id="prompt" rows="1" placeholder="Message ChatGPT…" aria-label="Message ChatGPT"></textarea>
+      <div class="composer-actions">
+        <div id="composerHint" class="composer-hint">Enter to send · Shift+Enter for newline</div>
+        <button id="send" class="send-button" aria-label="Send message">↑</button>
       </div>
     </section>
 
     <footer class="footer">
+      <button id="syncChat" class="footer-button">Sync chat</button>
       <span id="agentId">desktop-chrome</span>
-      <span>v0.5.0</span>
+      <span>v0.6.0</span>
     </footer>
   </main>
   <script src="sidepanel.js"></script>
