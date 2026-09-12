@@ -26,6 +26,7 @@ jobs:
         run: |
           node --check chrome-extension/background.js
           node --check chrome-extension/service-worker.js
+          node --check chrome-extension/local-browser-tools.js
           node --check chrome-extension/chatgpt-content.js
           node --check chrome-extension/options.js
           node --check chrome-extension/sidepanel.js
