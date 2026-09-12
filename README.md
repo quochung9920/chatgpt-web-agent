@@ -1,106 +1,67 @@
 # ChatGPT Web Agent
 
-A secure bridge for turning a normal ChatGPT conversation into a **design → build → browser QA → repair** workflow for user-owned websites.
+A bridge for using a normal ChatGPT account as a **design → build → Chrome QA → repair** agent for your own websites, without calling the OpenAI API.
 
-The project is intentionally split into independent layers:
-
-- **Figma / HTML / image reference** — ChatGPT reads the design using the appropriate connected capability. Figma is not hard-coded into this repository.
-- **Control server** — exposes a small authenticated API, stores implementation targets, brokers Chrome commands, and performs visual comparisons.
-- **Chrome extension** — controls and inspects a user-approved Chrome session with whitelisted actions and Chrome DevTools Protocol.
-- **WordPress plugin** — exposes page, Gutenberg block, media, and reversible agent-CSS operations.
-
-## Goal
-
-The intended user experience is:
+## Version 0.3 architecture
 
 ```text
-User in ChatGPT
-  |
-  | "Build this WordPress section from this Figma node and verify it."
-  v
-ChatGPT reads Figma / HTML reference
-  |
-  v
-Create implementation TARGET
-  |
-  v
-Inspect existing WordPress page + block system
-  |
-  v
-Build/update Gutenberg + import assets + agent CSS
-  |
-  v
-Open real Chrome -> emulate viewport -> screenshot
-  |
-  v
-Inspect DOM + computed styles + console/network errors
-  |
-  v
-Compare reference vs implementation
-  |
-  +---- mismatch ----> repair WordPress -> verify again
-  |
-  +---- pass --------> complete
+You sign in normally at chatgpt.com
+          |
+          v
+Custom GPT + Actions
+          |
+          | OAuth 2.0 authorization code
+          v
+OAuth Gateway
+          |
+          | private generated internal credential
+          v
+Web Agent backend
+     +----+----+
+     |         |
+     v         v
+Chrome      WordPress
+Extension    Plugin
 ```
+
+The OAuth login is for **your Web Agent service**, not for OpenAI. Your ChatGPT account remains logged in at chatgpt.com and the model usage stays inside your ChatGPT plan/limits. This repository does not require an OpenAI API key.
 
 ## Repository structure
 
 ```text
 chatgpt-web-agent/
 ├── openapi.yaml
+├── chatgpt-action/
+│   ├── openapi.yaml
+│   └── instructions.md
 ├── server/
 │   ├── .env.example
 │   ├── package.json
 │   └── src/
+│       ├── oauth-gateway.js
+│       ├── oauth.js
 │       ├── index.js
 │       └── target-store.js
 ├── chrome-extension/
-│   ├── manifest.json
-│   ├── background.js
-│   ├── options.html
-│   └── options.js
 ├── wordpress-plugin/
-│   └── chatgpt-web-agent.php
 └── docs/
     └── SETUP.md
 ```
 
-## Version 0.2 capabilities
+## What 0.3 adds
 
-### Persistent implementation targets
+- OAuth 2.0 authorization-code gateway for Custom GPT Actions.
+- Access + refresh tokens signed by your own server.
+- Exact OAuth redirect allowlist.
+- Optional PKCE S256 verification.
+- Public ChatGPT-facing `/v1/*` routes require OAuth.
+- Existing backend is moved behind the gateway and receives only an internal credential.
+- The gateway proxies the Chrome WebSocket `/agent`, so the extension still uses the same public host.
+- `npm start` launches the OAuth gateway and automatically starts the existing backend.
 
-A target records what ChatGPT is trying to reproduce and where it should be implemented:
+## Existing implementation/QA capabilities
 
-```json
-{
-  "name": "Homepage hero",
-  "source": {
-    "type": "figma",
-    "url": "https://www.figma.com/design/...",
-    "nodeId": "4:1049",
-    "referenceImageUrl": "https://..."
-  },
-  "destination": {
-    "type": "wordpress",
-    "pageId": 42,
-    "url": "https://example.com/"
-  },
-  "viewports": [
-    { "label": "desktop", "width": 1440, "height": 900 },
-    { "label": "mobile", "width": 390, "height": 844, "mobile": true }
-  ]
-}
-```
-
-Target states support the repair loop:
-
-```text
-draft -> building -> verifying -> repairing -> verifying -> complete
-```
-
-### Chrome browser + visual QA
-
-Whitelisted browser actions include:
+### Chrome
 
 ```text
 tabs.list
@@ -125,42 +86,26 @@ debug.clear
 debug.stop
 ```
 
-`page.inspect` returns element geometry and computed CSS. The extension can emulate desktop/tablet/mobile viewports and can capture console/network diagnostics through Chrome DevTools Protocol.
+The extension supports viewport emulation, computed-style/bounding-box inspection, full-page/element screenshots, console diagnostics, and network diagnostics.
 
-The server also exposes higher-level operations:
+### WordPress
 
-- `POST /v1/verification/capture` — navigate, set viewport, inspect selectors, collect errors, and screenshot in one call.
-- `POST /v1/verification/compare` — compare the Chrome screenshot with a reference image and produce similarity metrics. A target automatically becomes `repairing` or `complete` based on the threshold.
+- inspect site/theme/registered blocks;
+- list/read/create/update pages;
+- parse Gutenberg block trees;
+- search/import media;
+- maintain a reversible Web-Agent-owned CSS layer.
 
-### WordPress implementation tools
+### Visual repair loop
 
-- Read site/theme/registered block context
-- List/read/create/update pages
-- Parse raw page content into a Gutenberg block tree
-- Search existing image attachments
-- Import a public HTTPS image into Media Library
-- Read/replace an **agent-owned CSS layer** injected separately from the active theme
-
-The dedicated CSS layer is deliberate: generated fixes can be replaced or cleared without editing theme files.
-
-## Figma workflow
-
-Figma itself is kept outside the web-agent transport. In a ChatGPT conversation with the Figma connector available, ChatGPT should:
-
-1. Read the exact node from the node-specific Figma URL.
-2. Use Figma design context as the reference, including its screenshot/assets/tokens.
-3. Create a Web Agent target whose `source.type` is `figma` and whose `source.nodeId` identifies that node.
-4. Reuse existing WordPress blocks/components where possible.
-5. Build the section.
-6. Capture Chrome at the matching viewport.
-7. Compare and inspect differences.
-8. Patch Gutenberg/CSS/assets and repeat until acceptable.
-
-The web agent therefore remains useful when the source is HTML, an image, an existing website, or another design system instead of Figma.
+- persistent implementation targets;
+- desktop/tablet/mobile verification state;
+- screenshot capture;
+- image similarity and pixel-difference metrics;
+- target states: `draft → building → verifying → repairing → complete`;
+- a target reaches `complete` only when all required viewports pass.
 
 ## Quick start
-
-### 1. Control server
 
 ```bash
 cd server
@@ -169,51 +114,77 @@ npm install
 npm start
 ```
 
-### 2. WordPress
-
-Copy `wordpress-plugin/` to:
+Configure the OAuth variables in `.env`, especially:
 
 ```text
-wp-content/plugins/chatgpt-web-agent/
+PUBLIC_BASE_URL=https://agent.example.com
+OAUTH_CLIENT_ID=chatgpt-web-agent
+OAUTH_CLIENT_SECRET=...
+OAUTH_SIGNING_SECRET=...
+OAUTH_LOGIN_PASSWORD=...
+OAUTH_ALLOWED_REDIRECT_URIS=<callback URL shown by the GPT Action builder>
 ```
 
-Activate it and open **Settings → ChatGPT Web Agent**. Put its generated token into the server as `WORDPRESS_TOKEN`.
+Then install:
 
-### 3. Chrome
-
-Open `chrome://extensions`, enable Developer Mode, choose **Load unpacked**, and select `chrome-extension/`.
-
-Configure its Options page with the control-server WebSocket URL, `AGENT_ID`, and `AGENT_TOKEN`.
-
-> Version 0.2 requests Chrome's `debugger` permission because viewport emulation, CDP screenshots, console capture, and network capture require it.
-
-### 4. Connect ChatGPT
-
-`openapi.yaml` describes the ChatGPT-facing API. Replace `https://agent.example.com` with the public HTTPS endpoint for your server and configure Bearer authentication using `API_KEY`.
-
-The ChatGPT-facing layer receives only `API_KEY`. Keep `AGENT_TOKEN` and `WORDPRESS_TOKEN` on the server/extension side.
-
-See [`docs/SETUP.md`](docs/SETUP.md) for full setup and example repair-loop calls.
-
-## Security model
+1. `wordpress-plugin/` in WordPress and copy its generated token into `WORDPRESS_TOKEN`.
+2. `chrome-extension/` with Chrome **Load unpacked** and configure the public gateway URL plus `AGENT_ID` / `AGENT_TOKEN`.
+3. Create a Custom GPT, paste `chatgpt-action/instructions.md` into its Instructions, and import `chatgpt-action/openapi.yaml` as an Action.
+4. Configure that Action to use OAuth with the URLs shown below.
 
 ```text
-ChatGPT integration -- API_KEY --> Control server
-Control server -- AGENT_TOKEN --> Chrome extension
-Control server -- WORDPRESS_TOKEN --> WordPress plugin
+Authorization URL: https://agent.example.com/oauth/authorize
+Token URL:         https://agent.example.com/oauth/token
+Client ID:         value of OAUTH_CLIENT_ID
+Client Secret:     value of OAUTH_CLIENT_SECRET
+Scope:             agent:control
 ```
 
-Important safeguards in the current implementation:
+When ChatGPT first uses the Action, it opens the Web Agent authorization page. Enter `OAUTH_LOGIN_PASSWORD` once to authorize the GPT. Do **not** enter your ChatGPT password there.
 
-- Remote browser actions are explicitly allowlisted.
-- Arbitrary JavaScript execution is not exposed.
-- WordPress media import requires a public HTTPS URL.
-- WordPress-generated CSS is isolated from theme files.
-- Reference-image host allowlisting can be enabled with `REFERENCE_ALLOWED_HOSTS`.
-- Delete/plugin/theme-install actions are intentionally not included yet.
+## Intended workflow
 
-Use HTTPS/WSS in production, rotate exposed credentials, and add human approval before introducing destructive actions.
+```text
+"Build this WordPress section from this Figma node."
+        |
+        v
+Inspect exact Figma node / HTML reference
+        |
+        v
+Inspect current WordPress implementation
+        |
+        v
+Create implementation TARGET
+        |
+        v
+Build Gutenberg + assets + Web Agent CSS
+        |
+        v
+Open real Chrome and capture QA evidence
+        |
+        v
+Compare reference vs implementation
+        |
+   mismatch? ---- yes ----> repair and verify again
+        |
+        no
+        v
+Verify remaining viewports -> complete
+```
 
-## Current status
+If a Figma connector is available to the GPT, use the exact node-specific design context. Otherwise the agent can use the user's logged-in Chrome session to navigate to the Figma node for browser-based inspection. Passwords for Figma/WordPress should never be sent to the GPT; use the user's existing browser sessions or the WordPress bridge.
 
-Version `0.2.0` is the first end-to-end foundation for autonomous visual repair. It provides the transport and verification primitives; ChatGPT remains the reasoning/orchestration layer that decides how to translate a Figma/HTML reference into the site's actual block system and how to repair mismatches.
+## Security boundaries
+
+```text
+Custom GPT -- OAuth access token --> OAuth Gateway
+OAuth Gateway -- generated internal token --> private backend
+Backend -- AGENT_TOKEN --> Chrome Extension
+Backend -- WORDPRESS_TOKEN --> WordPress Plugin
+```
+
+`AGENT_TOKEN`, `WORDPRESS_TOKEN`, `OAUTH_CLIENT_SECRET`, and `OAUTH_SIGNING_SECRET` are credentials for your own infrastructure. They are not OpenAI API keys and do not create OpenAI API usage charges.
+
+The browser action surface remains allowlisted and does not expose generic arbitrary JavaScript execution. Destructive WordPress/plugin/theme operations are intentionally excluded.
+
+See [`docs/SETUP.md`](docs/SETUP.md) for the complete setup process.
