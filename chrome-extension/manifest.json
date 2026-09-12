@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Web Agent",
-  "version": "0.7.0",
-  "description": "Use your existing ChatGPT web session as an autonomous agent that can inspect and operate your real Chrome browser from a side panel.",
-  "permissions": ["tabs", "activeTab", "scripting", "storage", "debugger", "sidePanel"],
+  "version": "0.8.0",
+  "description": "Use your existing ChatGPT web session as an autonomous Chrome agent sandboxed to a dedicated tab group.",
+  "permissions": ["tabs", "tabGroups", "activeTab", "scripting", "storage", "debugger", "sidePanel"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "service-worker.js", "type": "module" },
   "options_page": "options.html",
