@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check server JavaScript syntax
+        run: |
+          node --check server/src/index.js
+          node --check server/src/target-store.js
+
+      - name: Check Chrome extension JavaScript syntax
+        run: |
+          node --check chrome-extension/background.js
+          node --check chrome-extension/options.js
+
+      - name: Check WordPress plugin PHP syntax
+        run: php -l wordpress-plugin/chatgpt-web-agent.php
