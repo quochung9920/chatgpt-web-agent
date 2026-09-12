@@ -1,13 +1,14 @@
-# Setup guide — OAuth Custom GPT flow
+# Setup guide — browser-agent OAuth flow
 
-This guide configures ChatGPT Web Agent `0.3.0` so daily use happens inside a normal ChatGPT account without an OpenAI API key.
+This guide configures ChatGPT Web Agent `0.4.0` so daily use happens inside a normal ChatGPT account without an OpenAI API key and without a WordPress-specific plugin.
 
 ```text
 ChatGPT account
    -> Custom GPT Action
    -> OAuth Gateway
-   -> Web Agent backend
-   -> Chrome Extension + WordPress Plugin
+   -> Browser Agent Backend
+   -> Chrome Extension
+   -> any website in the user's Chrome session
 ```
 
 ## 1. Requirements
@@ -15,8 +16,9 @@ ChatGPT account
 - Node.js 20+
 - A public HTTPS domain for the OAuth gateway when connecting from ChatGPT
 - Chrome/Chromium with Developer Mode available for loading the extension
-- A WordPress site where you can install the included plugin
 - Access to create/configure a Custom GPT Action
+
+No WordPress plugin is required. WordPress, Elementor, Figma, Shopify, Webflow, and other systems are operated through Chrome.
 
 ## 2. Configure and start the server
 
@@ -27,7 +29,7 @@ npm install
 npm start
 ```
 
-`npm start` now launches `oauth-gateway.js`. The gateway automatically starts the existing backend on `INTERNAL_PORT`.
+`npm start` launches `oauth-gateway.js`, which starts `browser-backend.js` privately on `INTERNAL_PORT`.
 
 Important `.env` values:
 
@@ -40,70 +42,35 @@ SPAWN_BACKEND=true
 OAUTH_CLIENT_ID=chatgpt-web-agent
 OAUTH_CLIENT_SECRET=<long random secret>
 OAUTH_SIGNING_SECRET=<long random secret>
-OAUTH_LOGIN_PASSWORD=<password you will enter on the Web Agent authorization page>
+OAUTH_LOGIN_PASSWORD=<password for the Web Agent authorization page>
 OAUTH_ALLOWED_REDIRECT_URIS=<exact callback URL shown by the GPT Action builder>
 OAUTH_DEFAULT_SCOPE=agent:control
 
 AGENT_ID=desktop-chrome
-AGENT_TOKEN=<long random internal browser token>
-
-WORDPRESS_BASE_URL=https://example.com
-WORDPRESS_TOKEN=<token from the WordPress plugin>
+AGENT_TOKEN=<long random browser-agent token>
 ```
 
-`INTERNAL_API_KEY` is optional. When omitted, the gateway creates an ephemeral internal credential and passes it only to the private backend process. This key is not shown to ChatGPT.
+`INTERNAL_API_KEY` is optional. When omitted, the gateway generates an ephemeral internal credential and passes it only to the private browser backend process.
 
-None of the credentials above are OpenAI API keys.
+None of these values are OpenAI API keys.
 
 ## 3. HTTPS / reverse proxy
 
-Your Custom GPT must be able to reach the gateway over HTTPS. Point a domain such as:
+Expose the public gateway over HTTPS, for example:
 
 ```text
 https://agent.example.com
 ```
 
-to the public gateway port.
-
-The same host should forward WebSocket upgrades for:
+The same host must forward WebSocket upgrades for:
 
 ```text
 /agent
 ```
 
-The gateway proxies that WebSocket to the internal backend automatically.
+Do not expose `INTERNAL_PORT` publicly.
 
-Do not expose `INTERNAL_PORT` publicly if your deployment/firewall can avoid it.
-
-## 4. Install the WordPress plugin
-
-Copy:
-
-```text
-wordpress-plugin/
-```
-
-to:
-
-```text
-wp-content/plugins/chatgpt-web-agent/
-```
-
-Activate **ChatGPT Web Agent**, then open:
-
-```text
-Settings -> ChatGPT Web Agent
-```
-
-Copy the generated token into:
-
-```text
-WORDPRESS_TOKEN=
-```
-
-The plugin exposes only its allowlisted page/Gutenberg/media/CSS operations.
-
-## 5. Install the Chrome extension
+## 4. Install the Chrome extension
 
 Open:
 
@@ -123,17 +90,133 @@ Agent ID: desktop-chrome
 Agent Token: value of AGENT_TOKEN
 ```
 
-For local-only testing, use:
+For local-only testing:
 
 ```text
 ws://localhost:8787
 ```
 
-The extension uses Chrome's `debugger` permission for viewport emulation, full-page/element screenshots, console diagnostics, and network diagnostics.
+The extension uses Chrome's `debugger` permission for CDP input, accessibility inspection, viewport emulation, screenshots, console diagnostics, and network diagnostics.
 
-## 6. Check server and Chrome connection
+## 5. Browser actions
 
-The public health endpoint does not require OAuth:
+The agent can operate tabs and pages directly:
+
+```text
+tabs.list
+tabs.open
+tabs.switch
+tabs.close
+
+tab.active
+tab.navigate
+tab.reload
+tab.back
+tab.forward
+
+page.wait
+page.read
+page.inspect
+page.elements
+page.elementAt
+page.accessibility
+
+page.click
+page.doubleClick
+page.rightClick
+page.hover
+page.type
+page.key
+page.scroll
+page.drag
+page.upload
+
+page.viewport.get
+page.viewport.set
+page.viewport.clear
+page.screenshot
+page.elementScreenshot
+
+debug.start
+debug.logs
+debug.clear
+debug.stop
+```
+
+### DOM-first interaction
+
+For normal forms and pages, prefer selectors and accessibility information.
+
+Example click:
+
+```json
+{
+  "action": "page.click",
+  "args": { "selector": "button[type=submit]" }
+}
+```
+
+Example typing:
+
+```json
+{
+  "action": "page.type",
+  "args": {
+    "selector": "input[name=title]",
+    "text": "New page title",
+    "clear": true
+  }
+}
+```
+
+### Coordinate interaction
+
+For Figma, Elementor canvas areas, and other custom editors where DOM selectors are unreliable:
+
+```json
+{
+  "action": "page.click",
+  "args": { "x": 840, "y": 410 }
+}
+```
+
+Drag:
+
+```json
+{
+  "action": "page.drag",
+  "args": {
+    "fromX": 400,
+    "fromY": 300,
+    "toX": 760,
+    "toY": 520
+  }
+}
+```
+
+The agent should screenshot or inspect before using uncertain coordinates.
+
+## 6. File upload
+
+`page.upload` accepts file data already supplied to the current task and assigns it to a visible HTML file input.
+
+```json
+{
+  "action": "page.upload",
+  "args": {
+    "selector": "input[type=file]",
+    "filename": "hero.png",
+    "mimeType": "image/png",
+    "dataUrl": "data:image/png;base64,..."
+  }
+}
+```
+
+This does **not** expose arbitrary local filesystem access.
+
+## 7. Check server and Chrome connection
+
+Public health endpoint:
 
 ```bash
 curl https://agent.example.com/health
@@ -145,30 +228,31 @@ Expected shape:
 {
   "ok": true,
   "service": "chatgpt-web-agent-oauth-gateway",
-  "version": "0.3.0",
-  "auth": "oauth2"
+  "version": "0.4.0",
+  "auth": "oauth2",
+  "mode": "browser-agent"
 }
 ```
 
-Protected `/v1/*` endpoints are intentionally not usable with a normal static API key on the public gateway. They require an OAuth access token.
+Protected `/v1/*` routes require OAuth.
 
-## 7. Create the Custom GPT
+## 8. Create the Custom GPT
 
-Create a Custom GPT and use:
+Create a Custom GPT and paste:
 
 ```text
 chatgpt-action/instructions.md
 ```
 
-as the main operating instructions.
+into its Instructions.
 
-Add an Action by importing:
+Add an Action using:
 
 ```text
 chatgpt-action/openapi.yaml
 ```
 
-Before importing, replace every occurrence of:
+Replace all occurrences of:
 
 ```text
 https://agent.example.com
@@ -176,9 +260,9 @@ https://agent.example.com
 
 with your real public gateway URL.
 
-## 8. Configure Action OAuth
+## 9. Configure OAuth
 
-In the Action authentication settings choose OAuth and use:
+Use:
 
 ```text
 Authorization URL: https://agent.example.com/oauth/authorize
@@ -188,7 +272,7 @@ Client Secret:     same as OAUTH_CLIENT_SECRET
 Scope:             agent:control
 ```
 
-The GPT builder will show an OAuth callback/redirect URL. Copy that exact URL into:
+The GPT builder shows an OAuth callback URL. Copy that exact URL to:
 
 ```text
 OAUTH_ALLOWED_REDIRECT_URIS=
@@ -196,91 +280,71 @@ OAUTH_ALLOWED_REDIRECT_URIS=
 
 Then restart the server.
 
-Multiple exact callback URLs can be comma-separated if necessary.
+## 10. First authorization
 
-## 9. First authorization
-
-When the GPT first invokes the Web Agent Action, ChatGPT opens:
+When the GPT first invokes the Web Agent, ChatGPT opens:
 
 ```text
 https://agent.example.com/oauth/authorize
 ```
 
-The page asks for:
+Enter `OAUTH_LOGIN_PASSWORD` on that page.
+
+This is the password for your own Web Agent service, **not** your ChatGPT password. ChatGPT itself remains authenticated normally at chatgpt.com.
+
+## 11. OAuth endpoints
 
 ```text
-Web Agent access password
-```
-
-Enter the value of:
-
-```text
-OAUTH_LOGIN_PASSWORD
-```
-
-This is **not** your ChatGPT password. Your ChatGPT account is already authenticated by chatgpt.com; this OAuth step only grants that GPT access to your private Web Agent.
-
-After authorization, the gateway returns an OAuth authorization code to ChatGPT, ChatGPT exchanges it for an access token, and refresh tokens keep the connection usable without an OpenAI API key.
-
-## 10. OAuth endpoints
-
-Discovery metadata:
-
-```text
-GET /.well-known/oauth-authorization-server
-```
-
-Authorization:
-
-```text
-GET/POST /oauth/authorize
-```
-
-Token exchange / refresh:
-
-```text
+GET  /.well-known/oauth-authorization-server
+GET  /oauth/authorize
+POST /oauth/authorize
 POST /oauth/token
 ```
 
-The provider supports:
+The provider supports authorization-code flow, refresh tokens, client-secret basic/post, PKCE S256, and exact redirect URI allowlisting.
 
-- authorization code grant;
-- refresh token grant;
-- client secret basic;
-- client secret post;
-- optional PKCE S256;
-- exact redirect URI allowlisting.
+## 12. Daily workflow
 
-## 11. Intended daily workflow
-
-After the one-time setup, you work in ChatGPT:
+After setup, you can say in your Custom GPT:
 
 ```text
-"Build the homepage hero from this Figma node and verify it in Chrome."
+Open this Figma node, inspect the hero section, then reproduce it on my website.
+Use the site's existing editor. Check desktop and mobile and keep fixing it until it matches.
 ```
 
-The GPT should:
+Typical agent flow:
 
 ```text
-1. inspect the exact Figma/HTML reference
-2. inspect the current WordPress page
-3. create/update an implementation target
-4. build Gutenberg + media + Web Agent CSS
-5. open/reload the real frontend in Chrome
-6. inspect DOM/computed styles/console/network
-7. capture desktop QA
-8. compare and repair
-9. repeat for tablet and mobile
-10. finish only when required viewports pass or a genuine blocker exists
+1. list/open/switch to the Figma tab
+2. inspect the exact reference node
+3. screenshot reference evidence
+4. open/switch to the destination admin/editor tab
+5. inspect current UI and identify controls
+6. operate the website UI directly
+7. open the frontend/result tab
+8. capture screenshot + DOM/accessibility/styles + errors
+9. compare against reference
+10. return to editor and repair
+11. repeat for desktop/tablet/mobile
 ```
 
-## 12. Figma behavior
+## 13. WordPress behavior
 
-If the GPT has a Figma connector/tool available, use the exact node-specific design context first.
+There is no Web Agent WordPress plugin.
 
-If not, the connected Chrome session can navigate to the exact Figma node URL using the user's existing Figma login session. The Web Agent must never ask for or store the user's Figma password.
+For WordPress tasks the agent uses Chrome to:
 
-## 13. Credentials explained
+```text
+wp-admin
+-> Pages / Posts / Media / Settings
+-> Gutenberg or Elementor
+-> Update / Save / Publish as requested
+-> frontend preview
+```
+
+The same approach applies to Shopify, Webflow, and other web apps.
+
+## 14. Credentials explained
 
 ```text
 OAUTH_CLIENT_SECRET
@@ -294,24 +358,17 @@ secure the OAuth service you own.
 AGENT_TOKEN
 ```
 
-secures the Chrome extension connection.
+secures the Chrome Extension <-> Browser Backend connection.
 
-```text
-WORDPRESS_TOKEN
-```
+None of these credentials call the OpenAI API or create OpenAI API token charges.
 
-secures the WordPress plugin connection.
-
-None of these call OpenAI's API or cause OpenAI API token charges.
-
-## 14. Production recommendations
+## 15. Production recommendations
 
 - Use HTTPS/WSS only.
 - Keep `INTERNAL_PORT` private.
 - Use long random secrets.
-- Set an exact `OAUTH_ALLOWED_REDIRECT_URIS` list.
-- Rotate secrets after exposure.
-- Keep destructive operations outside the tool surface unless explicit approval rules are added.
+- Keep exact OAuth redirect URI allowlists.
+- Rotate exposed secrets.
+- Add rate limiting and an audit log for production use.
 - Keep the browser action allowlist; do not add generic arbitrary JavaScript execution.
-- Add rate limiting and an audit log before broad production use.
-- Prefer draft pages during early testing.
+- Require explicit user intent for destructive or consequential actions.
