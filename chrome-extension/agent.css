@@ -1,0 +1,84 @@
+.panel-shell {
+  grid-template-rows: auto auto auto auto auto minmax(0, 1fr) auto auto;
+}
+
+.agent-mode-badge {
+  border: 1px solid #365747;
+  background: #1c2b24;
+  color: #8ed5b1;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.agent-activity {
+  border: 1px solid #343434;
+  border-radius: 11px;
+  background: #1b1b1b;
+  padding: 10px;
+}
+
+.agent-activity-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.agent-activity-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #ededed;
+}
+
+.agent-activity-status {
+  margin-top: 2px;
+  font-size: 9px;
+  color: #898989;
+}
+
+.stop-button {
+  padding: 5px 9px;
+  border: 1px solid #5c3434;
+  border-radius: 8px;
+  background: #2d1c1c;
+  color: #ffaaa6;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.stop-button:disabled {
+  opacity: .4;
+  cursor: default;
+}
+
+.agent-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 112px;
+  overflow-y: auto;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #292929;
+}
+
+.agent-step {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 5px;
+  color: #a9a9a9;
+  font-size: 9.5px;
+  line-height: 1.35;
+}
+
+.agent-step-mark {
+  color: #6ec79b;
+  font-weight: 700;
+}
+
+.agent-step.error,
+.agent-step.error .agent-step-mark {
+  color: #ef8883;
+}
