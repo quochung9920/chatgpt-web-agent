@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ChatGPT Web Agent Settings</title>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 20px; }
+    label { display: block; margin: 18px 0 6px; font-weight: 600; }
+    input { width: 100%; box-sizing: border-box; padding: 10px 12px; }
+    button { margin-top: 20px; padding: 10px 16px; cursor: pointer; }
+    #status { margin-left: 10px; }
+  </style>
+</head>
+<body>
+  <h1>ChatGPT Web Agent</h1>
+  <p>Configure the control server connection. Use <code>ws://</code> locally and <code>wss://</code> in production.</p>
+  <label for="serverUrl">Server URL</label>
+  <input id="serverUrl" placeholder="ws://localhost:8787" />
+  <label for="agentId">Agent ID</label>
+  <input id="agentId" placeholder="desktop-chrome" />
+  <label for="agentToken">Agent token</label>
+  <input id="agentToken" type="password" autocomplete="off" />
+  <button id="save">Save</button><span id="status"></span>
+  <script src="options.js"></script>
+</body>
+</html>
