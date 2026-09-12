@@ -29,7 +29,10 @@ jobs:
           node --check chrome-extension/local-browser-tools.js
           node --check chrome-extension/tab-group-session.js
           node --check chrome-extension/group-scoped-tools.js
+          node --check chrome-extension/agent-tools.js
+          node --check chrome-extension/agent-policy.js
           node --check chrome-extension/group-ui.js
+          node --check chrome-extension/permission-ui.js
           node --check chrome-extension/chatgpt-content.js
           node --check chrome-extension/options.js
           node --check chrome-extension/sidepanel.js
