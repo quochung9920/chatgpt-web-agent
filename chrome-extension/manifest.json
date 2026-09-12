@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Web Agent",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Connects a user-approved Chrome session to ChatGPT for direct website automation, inspection, and visual QA.",
-  "permissions": ["tabs", "activeTab", "scripting", "storage", "debugger"],
+  "permissions": ["tabs", "activeTab", "scripting", "storage", "debugger", "sidePanel"],
   "host_permissions": ["<all_urls>"],
-  "background": { "service_worker": "background.js", "type": "module" },
+  "background": { "service_worker": "service-worker.js", "type": "module" },
   "options_page": "options.html",
-  "action": { "default_title": "ChatGPT Web Agent" }
+  "side_panel": { "default_path": "sidepanel.html" },
+  "action": { "default_title": "Open ChatGPT Web Agent" }
 }
