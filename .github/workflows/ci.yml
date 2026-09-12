@@ -19,6 +19,8 @@ jobs:
         run: |
           node --check server/src/index.js
           node --check server/src/target-store.js
+          node --check server/src/oauth.js
+          node --check server/src/oauth-gateway.js
 
       - name: Check Chrome extension JavaScript syntax
         run: |
