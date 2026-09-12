@@ -1,81 +1,129 @@
 # ChatGPT Web Agent
 
-A browser-first agent that uses the user's existing logged-in `chatgpt.com` session as the reasoning engine while a Chrome extension observes and operates the user's real browser.
+A browser-first Chrome agent that uses the user's existing logged-in `chatgpt.com` session as the reasoning engine.
 
-**Current Chrome extension: v0.9.0.**
+**Current Chrome extension: v0.11.0.**
 
-No OpenAI API key is required for Side Panel browser-session mode.
+No OpenAI API key is required for the Side Panel browser-session workflow.
 
-> This project can approximate the workflow and UX of first-party browser agents, but it is not a first-party OpenAI browser tool integration. The ChatGPT bridge depends on the `chatgpt.com` web UI and may need selector updates when that UI changes.
+> This project approximates a first-party browser agent, but it is not a native OpenAI browser-tool integration. The ChatGPT bridge depends on the `chatgpt.com` web UI and may need selector updates when that UI changes.
 
-## v0.9 architecture
+## v0.11 — Hybrid Vision + DOM + virtual CDP
 
-```text
-Windows Chrome
-┌──────────────────────────────────────────────────────────┐
-│                                                         │
-│  ╭──────────── ChatGPT Agent tab group ──────────────╮  │
-│  │ Elementor │ Figma │ Frontend │ wp-admin │ ...    │  │
-│  ╰────────────────────────────────────────────────────╯  │
-│                                            Side Panel    │
-│                                    ┌───────────────────┐  │
-│                                    │ ChatGPT Web Agent │  │
-│                                    │ observe           │  │
-│                                    │ decide            │  │
-│                                    │ act               │  │
-│                                    │ verify            │  │
-│                                    └───────────────────┘  │
-│                                                         │
-│  chatgpt.com reasoning tab (outside the agent group)    │
-└──────────────────────────────────────────────────────────┘
-                         │
-                         └─ optional WSL Web Agent backend
-```
-
-The ChatGPT login/session stays inside Chrome. The extension does not export ChatGPT cookies or session tokens to WSL.
-
-## Agent loop
-
-v0.9 uses an observe-act-verify loop instead of a blind command loop:
+The runtime no longer treats DOM as the mandatory first step.
 
 ```text
 User task
-  ↓
-Initial observation
-  ├─ safe DOM/page text
-  ├─ interactive elements
-  ├─ accessibility snapshot
-  └─ screenshot → ChatGPT vision
-  ↓
-ChatGPT decision
-  ↓
-Browser action
-  ↓
-Automatic post-action observation
-  ↓
-ChatGPT verifies result
-  ↓
-repeat until complete
+   ↓
+Screenshot-first LOOK
+   ↓
+ChatGPT vision
+   ↓
+choose fastest action path
+   ├─ Semantic DOM/accessibility when available
+   └─ Virtual CDP coordinates for canvas/custom UI
+   ↓
+local action batch
+   ↓
+fresh screenshot verification
+   ↓
+repeat only when another model decision is needed
 ```
 
-The agent receives browser context automatically, so it should not ask the user to paste a URL or manually provide a screenshot when the page is already inside the active agent group.
+The core principle is:
+
+```text
+SEE with Vision
+ACT with DOM or virtual CDP
+VERIFY with Vision
+```
+
+This works well across normal websites, WordPress/admin forms, Elementor, Figma, canvas/WebGL apps, maps and other interfaces where DOM selectors alone are unreliable.
+
+## Why hybrid
+
+### DOM/accessibility path
+
+Fastest and most precise when the page exposes useful controls:
+
+```text
+page.find
+page.clickText
+page.typeByLabel
+page.selectOption
+page.check
+```
+
+### Vision/CDP path
+
+Fallback for canvas, custom renderers and hard-to-select UI:
+
+```text
+page.look      screenshot + tab metadata
+page.click     x/y virtual click
+page.typeAt    x/y virtual click + CDP text input
+page.drag      virtual drag
+page.scroll
+page.hotkey
+```
+
+Virtual CDP input is delivered directly to Chrome. It does **not** move the user's Windows mouse pointer and does **not** take over the physical keyboard.
+
+## Performance model
+
+v0.11 reduces ChatGPT round-trips in two ways:
+
+1. the initial context is screenshot-first instead of a large DOM/accessibility dump;
+2. ChatGPT can return a small deterministic `batch` of browser actions, which the extension executes locally before asking the model again.
+
+The agent is instructed to use a batch only when it does not need to see an intermediate result first.
+
+Typical flow:
+
+```text
+Screenshot
+  ↓
+ChatGPT decides:
+  1. click heading
+  2. Ctrl+A
+  3. type text
+  ↓
+Extension executes locally
+  ↓
+Fresh screenshot
+  ↓
+ChatGPT verifies
+```
 
 ## Tab Group sandbox
 
-Each agent workspace is one real Chrome Tab Group named **ChatGPT Agent**.
+Each workspace is a real Chrome Tab Group named **ChatGPT Agent**.
 
-- opening the Side Panel on a website can make that tab the session seed;
-- the agent can only inspect and operate website tabs in the active group;
-- `tabs.open` creates new websites inside the same group;
-- tabs opened from a group tab are automatically captured into the group when possible;
+- the agent can only inspect or operate tabs in the active group;
+- new websites opened by the agent join the same group;
 - the ChatGPT reasoning tab stays outside the group;
-- tool calls targeting a tab outside the group fail with `tab_outside_agent_group`.
+- tool calls targeting tabs outside the group fail;
+- the Side Panel is scoped to the agent group and closes when the user switches to a tab outside the group.
 
-This restriction is enforced by the extension, not only by prompting the model.
+This restriction is enforced by extension code, not just by prompt instructions.
+
+## No OS mouse/keyboard takeover
+
+The agent does not use PyAutoGUI, AutoHotkey, Windows `SetCursorPos`, or OS-level keyboard injection.
+
+Input is handled by:
+
+```text
+DOM events/setters
+or
+Chrome DevTools Protocol Input.* events
+```
+
+So the user can keep using the physical mouse and keyboard while the agent operates browser tabs.
 
 ## Permission modes
 
-The Side Panel supports three modes:
+The Side Panel supports:
 
 ```text
 Automatically approve
@@ -83,29 +131,60 @@ Ask before actions
 Read only
 ```
 
-Even in **Automatically approve**, sensitive actions are intercepted and require explicit user approval when the agent detects targets/intents such as:
+Sensitive actions such as delete, publish, send, checkout/payment, account destruction, logout/revoke and other high-risk operations require explicit approval even in automatic mode.
 
-- delete/remove/account destruction;
-- publish;
-- send/submit;
-- purchases/checkout/payment/transfers;
-- passwords/passcodes;
-- logout/revoke/disconnect;
-- closing tabs.
+## ChatGPT streaming and model picker
 
-The panel shows an approval card with **Deny** and **Allow once**.
+The Side Panel mirrors the selected ChatGPT conversation and streams assistant output while ChatGPT is generating.
 
-## Prompt-injection and secret safeguards
+The model selector is discovered from the real `chatgpt.com` model picker for the user's account rather than from a hard-coded model list.
 
-Webpage content is treated as untrusted data in the agent system context.
+## Main browser tools
 
-The runtime instructs ChatGPT not to obey page content that tries to override the user task, reveal secrets, leave the active group, or change agent policy.
+### Screenshot / visual
 
-Password input values are redacted from safe observations and accessibility snapshots.
+```text
+page.look
+page.screenshot
+page.viewport.get
+page.viewport.set
+page.viewport.clear
+```
 
-## Browser capabilities
+### Semantic / DOM
 
-Core navigation and page control:
+```text
+page.peekDom
+page.read
+page.accessibility
+page.find
+page.inspect
+page.elements
+page.elementAt
+page.clickText
+page.typeByLabel
+page.focus
+page.selectOption
+page.check
+```
+
+### Virtual input
+
+```text
+page.click
+page.doubleClick
+page.rightClick
+page.hover
+page.typeAt
+page.type
+page.key
+page.hotkey
+page.scroll
+page.drag
+page.upload
+```
+
+### Tabs/navigation
 
 ```text
 tabs.list
@@ -118,92 +197,38 @@ tab.navigate
 tab.reload
 tab.back
 tab.forward
-
-page.wait
-page.read
-page.accessibility
-page.inspect
-page.elements
-page.elementAt
-page.screenshot
-
-page.click
-page.doubleClick
-page.rightClick
-page.hover
-page.type
-page.key
-page.scroll
-page.drag
-
-page.viewport.get
-page.viewport.set
-page.viewport.clear
-```
-
-v0.9 semantic/agent tools:
-
-```text
-page.observe        combined safe DOM + accessibility + screenshot
-page.find           semantic element search
-page.clickText      click by visible text/role
-page.typeByLabel    type by label/aria-label/placeholder
-page.focus           focus an element semantically or by selector
-page.selectOption    select native options
-page.check           set checkbox/radio state
-page.hotkey          CDP keyboard shortcuts
-page.upload          upload supplied task data to file inputs
-```
-
-For complex visual apps such as Elementor and Figma, the agent can combine semantic DOM/accessibility tools with screenshots and coordinate-based mouse/drag controls.
-
-## Side Panel
-
-The Side Panel provides:
-
-- server and ChatGPT connection state;
-- current working website;
-- current Chrome agent group and tab count;
-- permission mode selector;
-- ChatGPT conversation selection;
-- activity timeline;
-- Stop button;
-- sensitive-action approval cards;
-- direct task input.
-
-Example task:
-
-```text
-Open the Figma tab in this group, inspect the PawCare hero,
-then switch to Elementor and rebuild the hero to match it.
-Verify desktop and mobile before finishing.
 ```
 
 ## Runtime limits
 
-To prevent accidental infinite loops, a task currently has:
+Current defaults:
 
 ```text
-maximum browser steps: 40
-maximum runtime: 10 minutes
+maximum model rounds: 14
+maximum browser actions: 40
+maximum actions per local batch: 6
+maximum task runtime: 10 minutes
 approval timeout: 2 minutes
 ```
-
-The latest task state is persisted in extension storage for diagnostics.
 
 ## Chrome extension structure
 
 ```text
 chrome-extension/
 ├── manifest.json
+├── service-worker-entry.js
 ├── service-worker.js
-├── background.js
+├── hybrid-agent-runtime.js
 ├── agent-tools.js
 ├── agent-policy.js
 ├── local-browser-tools.js
 ├── group-scoped-tools.js
 ├── tab-group-session.js
+├── sidepanel-scope.js
 ├── chatgpt-content.js
+├── chatgpt-live-bridge.js
+├── stream-model-bridge.js
+├── stream-model-ui.js
 ├── sidepanel.html
 ├── sidepanel.css
 ├── agent.css
@@ -216,23 +241,24 @@ chrome-extension/
 
 ## Quick start
 
-### 1. Run the optional WSL server
+### 1. Update the repository
 
 ```bash
-cd ~/projects/chatgpt-web-agent/server
+cd ~/projects/chatgpt-web-agent
+git pull origin main
+```
+
+### 2. Optional WSL backend
+
+```bash
+cd server
 npm install
 npm start
 ```
 
-Local extension configuration:
+The Side Panel agent logic runs mainly inside the Chrome extension. The WSL backend remains useful for persistence, remote control, visual comparison and future integrations.
 
-```text
-Server URL: ws://localhost:8787
-Agent ID: desktop-chrome
-Agent Token: same AGENT_TOKEN as server/.env
-```
-
-### 2. Load the extension
+### 3. Reload the extension
 
 Open:
 
@@ -240,75 +266,29 @@ Open:
 chrome://extensions
 ```
 
-Enable Developer Mode, choose **Load unpacked**, and select `chrome-extension/`.
+Reload **ChatGPT Web Agent** and confirm version `0.11.0`.
 
-After pulling a new version, press **Reload** on the extension card.
+### 4. Open ChatGPT
 
-### 3. Keep ChatGPT logged in
+Keep at least one logged-in `https://chatgpt.com/` tab open.
 
-Open at least one logged-in:
+### 5. Start a workspace
 
-```text
-https://chatgpt.com/
-```
+Open the website you want to work on and click the extension icon. That website becomes the seed of the **ChatGPT Agent** tab group.
 
-The reasoning conversation stays in that tab while the website and Side Panel remain visible.
-
-### 4. Open the Side Panel on the website you want to control
-
-Click the ChatGPT Web Agent extension icon.
-
-The website becomes part of the orange **ChatGPT Agent** group. Use **Use current tab** when you intentionally want to switch the agent to another workspace.
-
-### 5. Choose a permission mode and give the agent a task
-
-Recommended for normal development work:
+Example task:
 
 ```text
-Automatically approve
+Look at the Figma design in this group, then rebuild the hero in Elementor.
+Use DOM controls when reliable and visual/CDP actions when the editor is canvas-like.
+Verify the frontend visually before finishing.
 ```
 
-Sensitive operations still require manual approval.
+## Security notes
 
-## Example verification workflow
-
-```text
-Figma reference tab
-  ↓ observe + screenshot
-Elementor editor tab
-  ↓ inspect / click / type / drag
-Frontend tab
-  ↓ screenshot + DOM observation
-Desktop / tablet / mobile
-  ↓ verify
-Mismatch
-  ↓ return to editor and repair
-DONE
-```
-
-## What is not first-party parity
-
-This project cannot attach native browser tools directly to the model running a normal ChatGPT web conversation. The extension therefore bridges browser observations/tool results through the logged-in ChatGPT web UI.
-
-Consequences:
-
-- ChatGPT web DOM changes can break the bridge;
-- screenshot attachment depends on the current ChatGPT composer UI;
-- some cross-origin iframe, closed Shadow DOM, canvas-only or browser-native UI interactions can require coordinate fallback or remain inaccessible;
-- `chrome://` pages and Chrome toolbar/native dialogs are not ordinary website targets.
-
-## Optional Custom GPT + OAuth mode
-
-The repository still contains:
-
-```text
-chatgpt-action/openapi.yaml
-chatgpt-action/instructions.md
-docs/SETUP.md
-```
-
-for users who prefer an official Custom GPT Action/OAuth path instead of the browser-session bridge.
-
-## Version
-
-`0.9.0` — tab-group sandbox + automatic observation + semantic tools + screenshot vision + permission/risk policy + observe-act-verify agent loop.
+- ChatGPT cookies/session tokens stay inside Chrome.
+- Password field values are redacted from safe observations.
+- Page content is treated as untrusted data.
+- The agent cannot intentionally target tabs outside the active agent group.
+- High-risk state-changing operations require approval.
+- The runtime does not need OpenAI API keys for the normal Side Panel workflow.
