@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Web Agent",
-  "version": "0.11.3",
-  "description": "Hybrid vision + DOM + virtual CDP browser agent with an automatically-created dedicated ChatGPT reasoning tab per agent group.",
+  "version": "0.11.4",
+  "description": "Hybrid vision + DOM + virtual CDP browser agent with a resilient control-plane and a dedicated ChatGPT reasoning tab per agent group.",
   "permissions": ["tabs", "tabGroups", "activeTab", "scripting", "storage", "debugger", "sidePanel"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "service-worker-entry.js", "type": "module" },
