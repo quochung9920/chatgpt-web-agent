@@ -3,6 +3,8 @@
   const groupName = document.querySelector('#groupName');
   const groupMeta = document.querySelector('#groupMeta');
   const useCurrentTabButton = document.querySelector('#useCurrentTab');
+  const chatSelect = document.querySelector('#chatgptTabSelect');
+  const newChatButton = document.querySelector('#newChat');
   const BINDINGS_KEY = 'agentGroupChatBindings';
 
   function isEligibleWebsiteUrl(url) {
@@ -78,6 +80,15 @@
     await createConversationForGroup(groupId);
   }
 
+  async function bindSelectedConversationToCurrentGroup() {
+    try {
+      const group = await runtimeRequest('agent.group.status');
+      if (!group?.active) return;
+      const status = await runtimeRequest('chatgpt.status');
+      if (status?.selectedTabId) await saveBinding(group.groupId, status.selectedTabId);
+    } catch {}
+  }
+
   async function refreshGroup() {
     try {
       const state = await runtimeRequest('agent.group.status');
@@ -102,11 +113,8 @@
         });
         renderGroup(state);
 
-        if (alreadyInCurrentGroup) {
-          await ensureConversationForGroup(state.groupId);
-        } else {
-          await createConversationForGroup(state.groupId);
-        }
+        if (alreadyInCurrentGroup) await ensureConversationForGroup(state.groupId);
+        else await createConversationForGroup(state.groupId);
         return;
       }
 
@@ -138,6 +146,14 @@
     } finally {
       useCurrentTabButton.disabled = false;
     }
+  });
+
+  chatSelect?.addEventListener('change', () => {
+    setTimeout(bindSelectedConversationToCurrentGroup, 250);
+  });
+
+  newChatButton?.addEventListener('click', () => {
+    setTimeout(bindSelectedConversationToCurrentGroup, 1200);
   });
 
   chrome.tabs.onRemoved.addListener(async (tabId) => {
