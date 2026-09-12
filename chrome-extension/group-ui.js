@@ -22,7 +22,7 @@
     if (!state?.active) {
       groupDot.className = 'status-dot offline';
       groupName.textContent = 'No agent group';
-      groupMeta.textContent = 'Open the panel on a website to create one';
+      groupMeta.textContent = 'Click the extension icon on a website to start one';
       return;
     }
 
@@ -103,31 +103,13 @@
 
   async function initializeGroup() {
     try {
-      const previous = await runtimeRequest('agent.group.status').catch(() => null);
-      const tab = await getActiveTab();
-      if (tab?.id && isEligibleWebsiteUrl(tab.url)) {
-        const alreadyInCurrentGroup = Boolean(previous?.active && previous.tabs?.some((item) => Number(item.id) === Number(tab.id)));
-        const state = await runtimeRequest('agent.group.ensure', {
-          seedTabId: tab.id,
-          forceNewIfOutside: true
-        });
-        renderGroup(state);
-
-        if (alreadyInCurrentGroup) await ensureConversationForGroup(state.groupId);
-        else await createConversationForGroup(state.groupId);
-        return;
-      }
-
-      if (previous?.active) {
-        renderGroup(previous);
-        await ensureConversationForGroup(previous.groupId);
-      } else {
-        await refreshGroup();
-      }
+      const state = await runtimeRequest('agent.group.status');
+      renderGroup(state);
+      if (state?.active) await ensureConversationForGroup(state.groupId);
     } catch (error) {
       groupDot.className = 'status-dot offline';
       groupName.textContent = 'No agent group';
-      groupMeta.textContent = error?.message || 'Open the panel on a website';
+      groupMeta.textContent = error?.message || 'Click the extension icon on a website';
     }
   }
 
