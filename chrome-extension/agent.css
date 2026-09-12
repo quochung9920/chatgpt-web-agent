@@ -1,5 +1,5 @@
 .panel-shell {
-  grid-template-rows: auto auto auto auto auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto auto auto auto auto minmax(0, 1fr) auto auto;
 }
 
 .agent-mode-badge {
@@ -10,6 +10,53 @@
   border-radius: 999px;
   font-size: 9px;
   white-space: nowrap;
+}
+
+.group-session-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid #4d3b25;
+  border-radius: 10px;
+  background: #231d17;
+}
+
+.group-session-copy {
+  min-width: 0;
+}
+
+.group-session-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #f0c58c;
+  font-size: 10px;
+}
+
+.group-session-line strong {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-session-meta {
+  margin-top: 3px;
+  color: #9d8568;
+  font-size: 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-session-card .secondary.small {
+  flex: 0 0 auto;
+  border-color: #5c4931;
+  background: #2a2119;
+  color: #e0b77e;
+  height: 30px;
 }
 
 .agent-activity {
