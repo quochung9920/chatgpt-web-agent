@@ -1,5 +1,26 @@
 .panel-shell {
-  grid-template-rows: auto auto auto auto auto auto auto minmax(0, 1fr) auto auto;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+}
+
+.panel-shell > * {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.panel-shell > .chat-area {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.composer-shell,
+.footer {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
 }
 
 .group-session-card {
