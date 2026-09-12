@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Web Agent",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Use your existing ChatGPT web session as an observe-act-verify Chrome agent sandboxed to a dedicated tab group.",
   "permissions": ["tabs", "tabGroups", "activeTab", "scripting", "storage", "debugger", "sidePanel"],
   "host_permissions": ["<all_urls>"],
