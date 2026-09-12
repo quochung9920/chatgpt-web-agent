@@ -1,5 +1,19 @@
 # Setup guide
 
+This guide configures ChatGPT Web Agent `0.2.0` for the intended workflow:
+
+```text
+Figma / HTML reference
+      ↓
+ChatGPT reasoning
+      ↓
+WordPress build/update
+      ↓
+Chrome visual QA
+      ↓
+compare + repair loop
+```
+
 ## 1. Control server
 
 Requirements: Node.js 20+.
@@ -11,9 +25,29 @@ npm install
 npm start
 ```
 
-Set strong random values for `API_KEY` and `AGENT_TOKEN`.
+Configure `.env`:
 
-For production, place the server behind HTTPS and a reverse proxy. The Chrome extension should then use a `wss://` URL.
+```text
+PORT=8787
+API_KEY=long-random-chatgpt-facing-key
+AGENT_ID=desktop-chrome
+AGENT_TOKEN=long-random-browser-agent-key
+WORDPRESS_BASE_URL=https://example.com
+WORDPRESS_TOKEN=token-from-wordpress-plugin
+REQUEST_TIMEOUT_MS=20000
+DATA_DIR=./data
+REFERENCE_ALLOWED_HOSTS=
+```
+
+`DATA_DIR` stores persistent implementation targets. It is ignored by Git.
+
+`REFERENCE_ALLOWED_HOSTS` is optional. When set, it is a comma-separated allowlist used by visual comparison when downloading reference images. Wildcards are supported only as a leading `*.` rule, for example:
+
+```text
+REFERENCE_ALLOWED_HOSTS=figma.com,*.figma.com,cdn.example.com
+```
+
+For production, place the server behind HTTPS and use WSS for the Chrome extension.
 
 ## 2. WordPress plugin
 
@@ -23,19 +57,29 @@ Copy the `wordpress-plugin` directory into:
 wp-content/plugins/chatgpt-web-agent
 ```
 
-Activate **ChatGPT Web Agent** in WordPress. Go to:
+Activate **ChatGPT Web Agent** and open:
 
 ```text
 Settings -> ChatGPT Web Agent
 ```
 
-Copy the generated token into the control server `.env` as `WORDPRESS_TOKEN`. Set `WORDPRESS_BASE_URL` to the site origin, for example:
+Copy the generated token into the server `.env` as `WORDPRESS_TOKEN`.
 
-```text
-https://example.com
+Version 0.2 provides:
+
+- page list/read/create/update;
+- parsed Gutenberg block tree;
+- image search/import;
+- registered block information;
+- a reversible agent-owned CSS layer.
+
+The agent CSS is stored separately from the active theme and injected as:
+
+```html
+<style id="chatgpt-web-agent-css">...</style>
 ```
 
-Restart the control server after changing environment values.
+This is the preferred place for iterative visual fixes until a design has stabilized.
 
 ## 3. Chrome extension
 
@@ -45,32 +89,39 @@ Open:
 chrome://extensions
 ```
 
-Enable **Developer mode**, click **Load unpacked**, and select the `chrome-extension` folder.
+Enable **Developer mode**, choose **Load unpacked**, and select `chrome-extension/`.
 
-Open the extension options and configure:
+Open the extension Options page and configure:
 
-- Server URL: `ws://localhost:8787` for local development, or the production `wss://` URL.
-- Agent ID: must match `AGENT_ID` in the server environment.
-- Agent token: must match `AGENT_TOKEN`.
+- Server URL: `ws://localhost:8787` locally, or the production `wss://` endpoint.
+- Agent ID: must equal server `AGENT_ID`.
+- Agent token: must equal server `AGENT_TOKEN`.
 
-The extension reconnects automatically.
+Version 0.2 uses Chrome's `debugger` permission. This is required for:
 
-## 4. Verify locally
+- viewport/device emulation;
+- full-page and element screenshots;
+- console error capture;
+- network request/response capture.
 
-Health check:
+The extension still exposes only whitelisted operations. It does not expose arbitrary remote JavaScript execution.
+
+## 4. Verify the three layers
+
+Health:
 
 ```bash
 curl http://localhost:8787/health
 ```
 
-Authenticated browser status:
+Browser connection:
 
 ```bash
 curl -H "Authorization: Bearer YOUR_API_KEY" \
   http://localhost:8787/v1/browser/status
 ```
 
-WordPress site information:
+WordPress connection:
 
 ```bash
 curl -H "Authorization: Bearer YOUR_API_KEY" \
@@ -87,15 +138,18 @@ curl -X POST \
   http://localhost:8787/v1/browser/action
 ```
 
-## 5. ChatGPT integration
+## 5. Connect ChatGPT
 
-`openapi.yaml` is the API contract for the server. Before importing/using it with a ChatGPT plugin or integration surface:
+`openapi.yaml` is the ChatGPT-facing contract.
 
-1. Replace `https://agent.example.com` with the public HTTPS URL of your deployed server.
-2. Configure Bearer authentication using the server `API_KEY`.
-3. Do not expose `AGENT_TOKEN` or `WORDPRESS_TOKEN` to the ChatGPT-facing layer.
+Before using it with a ChatGPT plugin/custom integration:
 
-The intended trust flow is:
+1. Deploy the control server to a public HTTPS endpoint.
+2. Replace `https://agent.example.com` in `openapi.yaml` with that endpoint.
+3. Configure Bearer authentication with `API_KEY`.
+4. Keep `AGENT_TOKEN` and `WORDPRESS_TOKEN` private to the control infrastructure.
+
+Trust flow:
 
 ```text
 ChatGPT -> API_KEY -> control server
@@ -103,67 +157,209 @@ control server -> AGENT_TOKEN -> Chrome extension
 control server -> WORDPRESS_TOKEN -> WordPress plugin
 ```
 
-## Production notes
+A normal ChatGPT conversation can use the workflow once that plugin/integration is connected. ChatGPT by itself does not automatically gain access to this API merely because the server is running.
 
-- Use HTTPS/WSS only.
-- Restrict CORS to the integration origins you actually need.
-- Put the server behind rate limiting.
-- Rotate credentials periodically.
-- Keep page creation defaulting to draft when practical.
-- Add human approval for destructive actions before implementing delete/plugin/theme operations.
-- Avoid arbitrary JavaScript execution from remote commands.
+## 6. Create an implementation target
 
-## Current action examples
+Example Figma target:
 
-### Read the active page
+```bash
+curl -X POST \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name":"Homepage hero",
+    "source":{
+      "type":"figma",
+      "url":"https://www.figma.com/design/FILE/Project?node-id=4-1049",
+      "nodeId":"4:1049"
+    },
+    "destination":{
+      "type":"wordpress",
+      "pageId":42,
+      "url":"https://example.com/"
+    },
+    "viewports":[
+      {"label":"desktop","width":1440,"height":900},
+      {"label":"mobile","width":390,"height":844,"mobile":true}
+    ]
+  }' \
+  http://localhost:8787/v1/targets
+```
+
+For a Figma workflow, ChatGPT should first read the exact Figma node through the Figma connector and use the returned screenshot/assets/tokens as reference context. The web agent does not scrape Figma itself.
+
+## 7. Build in WordPress
+
+Useful endpoints:
+
+```text
+GET   /v1/wordpress/site
+GET   /v1/wordpress/pages
+GET   /v1/wordpress/pages/{id}
+GET   /v1/wordpress/pages/{id}/blocks
+POST  /v1/wordpress/pages
+PATCH /v1/wordpress/pages/{id}
+GET   /v1/wordpress/media
+POST  /v1/wordpress/media/import
+GET   /v1/wordpress/styles/agent-css
+PUT   /v1/wordpress/styles/agent-css
+```
+
+When importing a Figma/exported asset:
 
 ```json
 {
-  "action": "page.read",
-  "args": { "maxLength": 50000 }
+  "url": "https://public-https-asset.example/image.png",
+  "filename": "hero-dog.png",
+  "title": "Homepage hero dog",
+  "alt": "Dog receiving veterinary care"
 }
 ```
 
-### Click an element
+## 8. Capture one QA observation
+
+A higher-level capture call sets the viewport, navigates, waits for the page, reads DOM context, inspects requested selectors, captures browser errors, and takes a screenshot:
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "targetId":"TARGET_UUID",
+    "url":"https://example.com/",
+    "viewport":{"width":1440,"height":900},
+    "selectors":[".hero",".hero h1",".hero img"],
+    "errorsOnly":true,
+    "fullPage":false
+  }' \
+  http://localhost:8787/v1/verification/capture
+```
+
+The observation includes:
+
+- viewport and document dimensions;
+- page text/HTML snapshot;
+- element bounding boxes;
+- computed CSS for inspected selectors;
+- console errors/warnings;
+- HTTP responses with error status when requested;
+- screenshot data URL.
+
+## 9. Compare against a reference
+
+You can pass either a reference image URL or image data URL.
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "targetId":"TARGET_UUID",
+    "referenceUrl":"https://cdn.example.com/reference.png",
+    "passThreshold":0.92,
+    "capture":{
+      "url":"https://example.com/",
+      "viewport":{"width":1440,"height":900},
+      "selectors":[".hero",".hero h1"]
+    }
+  }' \
+  http://localhost:8787/v1/verification/compare
+```
+
+The server returns:
+
+```text
+similarity
+pixelSimilarity
+dimensionSimilarity
+differentPixelRatio
+reference dimensions
+candidate dimensions
+```
+
+If a target was supplied, the target becomes:
+
+```text
+complete   when similarity >= passThreshold
+repairing  when similarity < passThreshold
+```
+
+Visual similarity is a QA signal, not a substitute for semantic inspection. Text wrapping, responsive behavior, DOM structure, accessibility, console errors, and reused design-system components should also be considered by ChatGPT.
+
+## 10. Recommended ChatGPT loop
+
+For each section or page:
+
+```text
+1. Read exact Figma node / HTML reference
+2. Create or update TARGET
+3. Read existing WordPress page + blocks + registered blocks
+4. Reuse existing block/component patterns
+5. Import required assets
+6. Write Gutenberg markup
+7. Write/update agent CSS
+8. Capture desktop QA
+9. Inspect mismatched selectors + errors
+10. Repair
+11. Capture again
+12. Repeat for tablet/mobile
+13. Mark target complete only after all required viewports pass
+```
+
+## Direct browser actions
+
+Examples:
+
+Inspect an element:
 
 ```json
 {
-  "action": "page.click",
-  "args": { "selector": "button[type=submit]" }
+  "action": "page.inspect",
+  "args": { "selector": ".hero h1" }
 }
 ```
 
-### Type into an element
+Set mobile viewport:
 
 ```json
 {
-  "action": "page.type",
+  "action": "page.viewport.set",
   "args": {
-    "selector": "input[name=s]",
-    "text": "hello",
-    "clear": true
+    "width": 390,
+    "height": 844,
+    "deviceScaleFactor": 1,
+    "mobile": true
   }
 }
 ```
 
-### Navigate
+Capture only browser errors:
 
 ```json
 {
-  "action": "tab.navigate",
-  "args": { "url": "https://example.com" }
+  "action": "debug.logs",
+  "args": { "errorsOnly": true }
 }
 ```
 
-## Recommended next milestone
+Element screenshot:
 
-The MVP deliberately keeps the tool surface small. The next milestone should add:
+```json
+{
+  "action": "page.elementScreenshot",
+  "args": { "selector": ".hero" }
+}
+```
 
-- per-domain browser allowlists and confirmation rules;
-- WordPress media upload/search;
-- Gutenberg block-aware helpers instead of only raw `post_content`;
-- WordPress menu/global-style operations;
-- DOM snapshots optimized for LLM use;
-- console error and network request inspection;
-- screenshot/visual-diff workflow;
-- append-only audit log for every remote action.
+## Production notes
+
+- Use HTTPS/WSS only.
+- Put the server behind rate limiting.
+- Restrict network exposure and CORS for your deployment.
+- Set `REFERENCE_ALLOWED_HOSTS` when visual references come from known CDNs.
+- Rotate all three credentials if any one is exposed.
+- Keep destructive operations out of the tool surface unless they have explicit approval policies.
+- Prefer draft pages for large generated changes until the workflow is trusted.
+- Do not add arbitrary JavaScript execution as a generic remote action.
+- Consider an append-only audit log before using this on production sites.
