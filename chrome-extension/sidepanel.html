@@ -29,7 +29,6 @@
         <span id="chatgptDot" class="status-dot checking"></span>
         <span id="chatgptBadge">ChatGPT</span>
       </div>
-      <span class="agent-mode-badge">Agent mode</span>
       <button id="refresh" class="text-button">Refresh</button>
     </section>
 
@@ -50,12 +49,36 @@
       <button id="useCurrentTab" class="secondary small">Use current tab</button>
     </section>
 
+    <section class="agent-controls-card">
+      <div>
+        <div class="control-title">Browser permissions</div>
+        <div class="control-copy">High-risk actions always require approval.</div>
+      </div>
+      <select id="permissionMode" aria-label="Browser permission mode">
+        <option value="auto">Automatically approve</option>
+        <option value="ask">Ask before actions</option>
+        <option value="read_only">Read only</option>
+      </select>
+    </section>
+
     <section class="chat-session-bar">
       <select id="chatgptTabSelect" aria-label="ChatGPT conversation tab">
         <option value="">Finding ChatGPT…</option>
       </select>
       <button id="newChat" class="secondary small">New chat</button>
       <button id="openChatgpt" class="secondary small">Open tab</button>
+    </section>
+
+    <section id="approvalCard" class="approval-card hidden" aria-live="assertive">
+      <div class="approval-icon">!</div>
+      <div class="approval-copy">
+        <strong id="approvalTitle">Approve browser action</strong>
+        <div id="approvalDetail">Waiting for approval…</div>
+      </div>
+      <div class="approval-actions">
+        <button id="denyAction" class="approval-deny">Deny</button>
+        <button id="approveAction" class="approval-allow">Allow once</button>
+      </div>
     </section>
 
     <section id="agentActivity" class="agent-activity hidden" aria-live="polite">
@@ -73,12 +96,12 @@
       <div id="emptyState" class="empty-state">
         <div class="empty-icon">✦</div>
         <div class="empty-title">Chat with your browser agent</div>
-        <p>The agent can only see and operate websites inside the orange ChatGPT Agent tab group. New websites opened by the agent stay in that same group.</p>
+        <p>The agent observes, acts and verifies inside the orange ChatGPT Agent tab group. New sites opened by the agent remain inside that group.</p>
       </div>
       <div id="messages" class="messages"></div>
       <div id="thinking" class="thinking hidden">
         <span></span><span></span><span></span>
-        <em>Agent is working in Chrome…</em>
+        <em>Agent is observing and working in Chrome…</em>
       </div>
     </section>
 
@@ -94,10 +117,11 @@
     <footer class="footer">
       <button id="syncChat" class="footer-button">Sync ChatGPT</button>
       <span id="agentId">desktop-chrome</span>
-      <span>v0.8.0</span>
+      <span>v0.9.0</span>
     </footer>
   </main>
   <script src="group-ui.js"></script>
+  <script src="permission-ui.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>
