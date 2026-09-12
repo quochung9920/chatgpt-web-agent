@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Web Agent",
-  "version": "0.10.0",
-  "description": "Use your existing ChatGPT web session as a streamed observe-act-verify Chrome agent sandboxed to a dedicated tab group, with ChatGPT model controls.",
+  "version": "0.11.0",
+  "description": "Hybrid vision + DOM + virtual CDP browser agent using the user's existing ChatGPT web session, streamed in a tab-group sandbox.",
   "permissions": ["tabs", "tabGroups", "activeTab", "scripting", "storage", "debugger", "sidePanel"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "service-worker-entry.js", "type": "module" },
