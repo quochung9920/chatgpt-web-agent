@@ -1,31 +1,37 @@
 import { installRuntimeControl, reportRuntimeModule } from './runtime-control.js';
+import { installTabScopedSidePanel } from './sidepanel-scope.js';
+import { installStreamModelBridge } from './stream-model-bridge.js';
+import { installHybridAgentRuntime } from './hybrid-agent-runtime.js';
+import { installRemoteBackground } from './background.js';
 
 installRuntimeControl();
 reportRuntimeModule('service-worker-entry', 'ready');
 
-async function loadModule(name, path, installerName = null) {
+function reportInstallError(name, error) {
+  const message = error?.stack || error?.message || String(error);
+  reportRuntimeModule(name, 'error', message);
+  console.error(`Failed to initialize ${name}:`, error);
+}
+
+function installSubsystem(name, installer) {
   reportRuntimeModule(name, 'loading');
   try {
-    const mod = await import(path);
-    if (installerName) {
-      const installer = mod?.[installerName];
-      if (typeof installer !== 'function') throw new Error(`missing_installer:${installerName}`);
-      await installer();
+    const result = installer();
+    if (result && typeof result.then === 'function') {
+      result
+        .then(() => reportRuntimeModule(name, 'ready'))
+        .catch((error) => reportInstallError(name, error));
+    } else {
+      reportRuntimeModule(name, 'ready');
     }
-    reportRuntimeModule(name, 'ready');
-    return mod;
   } catch (error) {
-    const message = error?.stack || error?.message || String(error);
-    reportRuntimeModule(name, 'error', message);
-    console.error(`Failed to load ${name}:`, error);
-    return null;
+    reportInstallError(name, error);
   }
 }
 
-// Optional/heavier subsystems are intentionally loaded after the core message
-// router. A failure in Hybrid/CDP/stream/remote modules must never remove
-// agent.group.status, chatgpt.status or runtime.health from the service worker.
-void loadModule('sidepanel-scope', './sidepanel-scope.js', 'installTabScopedSidePanel');
-void loadModule('stream-model-bridge', './stream-model-bridge.js', 'installStreamModelBridge');
-void loadModule('hybrid-agent-runtime', './hybrid-agent-runtime.js', 'installHybridAgentRuntime');
-void loadModule('remote-background', './background.js');
+// MV3 extension service workers support static ES module imports only.
+// Keep all imports static, then isolate runtime initialization failures here.
+installSubsystem('sidepanel-scope', installTabScopedSidePanel);
+installSubsystem('stream-model-bridge', installStreamModelBridge);
+installSubsystem('hybrid-agent-runtime', installHybridAgentRuntime);
+installSubsystem('remote-background', installRemoteBackground);
