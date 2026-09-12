@@ -1,76 +1,65 @@
-# Setup guide — browser-agent OAuth flow
+# Setup guide — ChatGPT Web Agent v0.9
 
-This guide configures ChatGPT Web Agent `0.4.0` so daily use happens inside a normal ChatGPT account without an OpenAI API key and without a WordPress-specific plugin.
+The primary workflow is now the Chrome Side Panel using the user's existing logged-in `chatgpt.com` session.
 
 ```text
-ChatGPT account
-   -> Custom GPT Action
-   -> OAuth Gateway
-   -> Browser Agent Backend
-   -> Chrome Extension
-   -> any website in the user's Chrome session
+Side Panel
+  -> ChatGPT web session already logged in
+  -> agent orchestrator
+  -> Chrome Tab Group sandbox
+  -> website UI
 ```
+
+No OpenAI API key is required for this mode.
 
 ## 1. Requirements
 
+- Windows Chrome/Chromium
+- WSL2 is recommended for the optional control server
 - Node.js 20+
-- A public HTTPS domain for the OAuth gateway when connecting from ChatGPT
-- Chrome/Chromium with Developer Mode available for loading the extension
-- Access to create/configure a Custom GPT Action
+- a normal logged-in `https://chatgpt.com/` tab in the same Chrome profile
 
-No WordPress plugin is required. WordPress, Elementor, Figma, Shopify, Webflow, and other systems are operated through Chrome.
+WordPress, Elementor, Figma, Shopify, Webflow and other systems are operated through Chrome. No WordPress-specific plugin is required.
 
-## 2. Configure and start the server
+## 2. Update the repository
 
 ```bash
-cd server
-cp .env.example .env
+cd ~/projects/chatgpt-web-agent
+git checkout main
+git pull origin main
+```
+
+## 3. Start the optional WSL server
+
+```bash
+cd ~/projects/chatgpt-web-agent/server
 npm install
 npm start
 ```
 
-`npm start` launches `oauth-gateway.js`, which starts `browser-backend.js` privately on `INTERNAL_PORT`.
-
-Important `.env` values:
+For local Chrome usage:
 
 ```text
-PORT=8787
-PUBLIC_BASE_URL=https://agent.example.com
-INTERNAL_PORT=8790
-SPAWN_BACKEND=true
-
-OAUTH_CLIENT_ID=chatgpt-web-agent
-OAUTH_CLIENT_SECRET=<long random secret>
-OAUTH_SIGNING_SECRET=<long random secret>
-OAUTH_LOGIN_PASSWORD=<password for the Web Agent authorization page>
-OAUTH_ALLOWED_REDIRECT_URIS=<exact callback URL shown by the GPT Action builder>
-OAUTH_DEFAULT_SCOPE=agent:control
-
-AGENT_ID=desktop-chrome
-AGENT_TOKEN=<long random browser-agent token>
+Server URL: ws://localhost:8787
+Agent ID: desktop-chrome
+Agent Token: value of AGENT_TOKEN in server/.env
 ```
 
-`INTERNAL_API_KEY` is optional. When omitted, the gateway generates an ephemeral internal credential and passes it only to the private browser backend process.
+Check it from WSL:
 
-None of these values are OpenAI API keys.
-
-## 3. HTTPS / reverse proxy
-
-Expose the public gateway over HTTPS, for example:
-
-```text
-https://agent.example.com
+```bash
+curl http://localhost:8787/health
 ```
 
-The same host must forward WebSocket upgrades for:
+and optionally from Windows PowerShell:
 
-```text
-/agent
+```powershell
+curl.exe http://localhost:8787/health
 ```
 
-Do not expose `INTERNAL_PORT` publicly.
+The Side Panel agent loop runs locally in the extension. The WSL server remains useful for remote control, persistence, target/visual comparison and optional OAuth mode.
 
-## 4. Install the Chrome extension
+## 4. Install or reload the Chrome extension
 
 Open:
 
@@ -79,296 +68,237 @@ chrome://extensions
 ```
 
 1. Enable **Developer mode**.
-2. Click **Load unpacked**.
+2. Choose **Load unpacked** for the first install.
 3. Select `chrome-extension/`.
-4. Open the extension Options page.
-5. Configure:
+4. For later updates, press **Reload** on the extension card.
+5. Confirm the extension version is `0.9.0`.
+
+If the repository is inside WSL, open the extension directory in Windows Explorer with:
+
+```bash
+cd ~/projects/chatgpt-web-agent/chrome-extension
+explorer.exe .
+```
+
+## 5. Configure the extension
+
+Open the extension Options page and set:
 
 ```text
-Server URL: wss://agent.example.com
+Server URL: ws://localhost:8787
 Agent ID: desktop-chrome
-Agent Token: value of AGENT_TOKEN
+Agent Token: <AGENT_TOKEN>
 ```
 
-For local-only testing:
+The Agent Token is a credential for your own Web Agent server. It is not an OpenAI API key and does not create OpenAI API usage charges.
+
+## 6. Open ChatGPT
+
+Keep at least one logged-in tab open:
 
 ```text
-ws://localhost:8787
+https://chatgpt.com/
 ```
 
-The extension uses Chrome's `debugger` permission for CDP input, accessibility inspection, viewport emulation, screenshots, console diagnostics, and network diagnostics.
+The extension uses that tab as a reasoning conversation. ChatGPT cookies/session tokens remain inside Chrome and are not copied to WSL.
 
-## 5. Browser actions
+## 7. Start an agent workspace
 
-The agent can operate tabs and pages directly:
+Navigate to the website you want the agent to control and click the ChatGPT Web Agent extension icon.
+
+The extension creates or activates a real Chrome Tab Group named:
 
 ```text
-tabs.list
-tabs.open
-tabs.switch
-tabs.close
+ChatGPT Agent
+```
 
-tab.active
-tab.navigate
-tab.reload
-tab.back
-tab.forward
+The active website becomes the seed tab.
 
-page.wait
-page.read
-page.inspect
-page.elements
-page.elementAt
-page.accessibility
+The agent is hard-sandboxed to this group:
 
-page.click
-page.doubleClick
-page.rightClick
-page.hover
-page.type
-page.key
-page.scroll
-page.drag
+- it only receives group tabs in `tabs.list`;
+- browser tools reject tab IDs outside the group;
+- new tabs created by `tabs.open` join the group;
+- links that open new tabs from a group website are captured into the group when possible;
+- the ChatGPT reasoning tab stays outside the group.
+
+Use **Use current tab** when you intentionally want to start a different browser workspace.
+
+## 8. Permission modes
+
+The Side Panel has three permission modes.
+
+### Automatically approve
+
+Recommended for website development and QA.
+
+Ordinary navigation, clicking, typing, scrolling and editor work can proceed automatically, but sensitive targets/intents still trigger a confirmation card.
+
+### Ask before actions
+
+Read operations run automatically. State-changing actions ask before execution.
+
+### Read only
+
+The agent can inspect, observe and screenshot but browser mutations are blocked.
+
+Sensitive actions such as publish, delete, send, submit, payment, purchase, password-related operations, revoke/logout and closing tabs require approval even in Automatically approve mode when detected.
+
+## 9. Observe → Act → Verify
+
+Every task starts with an automatic observation containing:
+
+```text
+safe page text
+interactive elements
+accessibility snapshot
+screenshot
+```
+
+Password field values are redacted.
+
+After state-changing browser actions, the runtime automatically observes the page again and sends the new state back to ChatGPT before the next decision.
+
+This produces the loop:
+
+```text
+observe
+ -> decide
+ -> act
+ -> re-observe
+ -> verify
+ -> continue or finish
+```
+
+## 10. Semantic browser tools
+
+Prefer these tools instead of brittle selectors:
+
+```text
+page.observe
+page.find
+page.clickText
+page.typeByLabel
+page.focus
+page.selectOption
+page.check
+page.hotkey
 page.upload
-
-page.viewport.get
-page.viewport.set
-page.viewport.clear
-page.screenshot
-page.elementScreenshot
-
-debug.start
-debug.logs
-debug.clear
-debug.stop
 ```
 
-### DOM-first interaction
-
-For normal forms and pages, prefer selectors and accessibility information.
-
-Example click:
+Examples:
 
 ```json
 {
-  "action": "page.click",
-  "args": { "selector": "button[type=submit]" }
+  "tool": "page.clickText",
+  "args": {
+    "text": "Update",
+    "role": "button"
+  }
 }
 ```
 
-Example typing:
-
 ```json
 {
-  "action": "page.type",
+  "tool": "page.typeByLabel",
   "args": {
-    "selector": "input[name=title]",
-    "text": "New page title",
+    "label": "Page title",
+    "text": "PawCare",
     "clear": true
   }
 }
 ```
 
-### Coordinate interaction
+Complex apps can still fall back to coordinate click/drag plus screenshot vision.
 
-For Figma, Elementor canvas areas, and other custom editors where DOM selectors are unreliable:
+## 11. Screenshot vision
 
-```json
-{
-  "action": "page.click",
-  "args": { "x": 840, "y": 410 }
-}
-```
+`page.observe` and `page.screenshot` can attach the captured PNG into the selected ChatGPT conversation.
 
-Drag:
+If the ChatGPT composer UI changes and image attachment fails, the bridge explicitly tells the model that it did **not** receive the screenshot so it can rely on DOM/accessibility data or retry later.
 
-```json
-{
-  "action": "page.drag",
-  "args": {
-    "fromX": 400,
-    "fromY": 300,
-    "toX": 760,
-    "toY": 520
-  }
-}
-```
+## 12. Prompt-injection boundary
 
-The agent should screenshot or inspect before using uncertain coordinates.
+The agent's system context treats webpage DOM/text and documents as untrusted data.
 
-## 6. File upload
+Website content must not be treated as authority to:
 
-`page.upload` accepts file data already supplied to the current task and assigns it to a visible HTML file input.
+- change the user's goal;
+- reveal secrets;
+- disable safety/permission policy;
+- escape the active tab group;
+- impersonate system/tool instructions.
 
-```json
-{
-  "action": "page.upload",
-  "args": {
-    "selector": "input[type=file]",
-    "filename": "hero.png",
-    "mimeType": "image/png",
-    "dataUrl": "data:image/png;base64,..."
-  }
-}
-```
+For high-impact work, keep the permission mode on **Ask before actions**.
 
-This does **not** expose arbitrary local filesystem access.
+## 13. Task controls
 
-## 7. Check server and Chrome connection
+The Side Panel shows an activity timeline and Stop button.
 
-Public health endpoint:
-
-```bash
-curl https://agent.example.com/health
-```
-
-Expected shape:
-
-```json
-{
-  "ok": true,
-  "service": "chatgpt-web-agent-oauth-gateway",
-  "version": "0.4.0",
-  "auth": "oauth2",
-  "mode": "browser-agent"
-}
-```
-
-Protected `/v1/*` routes require OAuth.
-
-## 8. Create the Custom GPT
-
-Create a Custom GPT and paste:
+Current limits:
 
 ```text
-chatgpt-action/instructions.md
+maximum browser steps: 40
+maximum runtime: 10 minutes
+approval timeout: 2 minutes
 ```
 
-into its Instructions.
+The latest task state is saved in extension storage for diagnostics.
 
-Add an Action using:
+## 14. Suggested first test
+
+Open a normal website inside the agent group and ask:
+
+```text
+Inspect this website. Do not ask me for the URL.
+Tell me the page title, main sections and primary buttons.
+```
+
+Then test a harmless action:
+
+```text
+Find the search field and type test, but do not submit it.
+```
+
+The activity timeline should show observation and browser tool steps.
+
+## 15. Elementor / Figma test
+
+For a development workflow, put these tabs in the same group:
+
+```text
+Figma reference
+Elementor editor
+frontend preview
+```
+
+Then ask:
+
+```text
+Inspect the hero in the Figma tab, compare it with the Elementor page,
+repair the Elementor hero, then verify the frontend at desktop and mobile sizes.
+```
+
+The agent can combine semantic DOM/accessibility inspection, screenshots, coordinate actions, viewport emulation and post-action verification.
+
+## 16. Optional Custom GPT + OAuth mode
+
+The repository still supports a separate Custom GPT/OAuth path using:
 
 ```text
 chatgpt-action/openapi.yaml
+chatgpt-action/instructions.md
+server/src/oauth-gateway.js
 ```
 
-Replace all occurrences of:
+This is optional. The Side Panel browser-session mode is the primary workflow for users who want to use their existing normal ChatGPT login without an OpenAI API key.
 
-```text
-https://agent.example.com
-```
+## 17. Known limits
 
-with your real public gateway URL.
+This is not a first-party OpenAI browser integration.
 
-## 9. Configure OAuth
-
-Use:
-
-```text
-Authorization URL: https://agent.example.com/oauth/authorize
-Token URL:         https://agent.example.com/oauth/token
-Client ID:         same as OAUTH_CLIENT_ID
-Client Secret:     same as OAUTH_CLIENT_SECRET
-Scope:             agent:control
-```
-
-The GPT builder shows an OAuth callback URL. Copy that exact URL to:
-
-```text
-OAUTH_ALLOWED_REDIRECT_URIS=
-```
-
-Then restart the server.
-
-## 10. First authorization
-
-When the GPT first invokes the Web Agent, ChatGPT opens:
-
-```text
-https://agent.example.com/oauth/authorize
-```
-
-Enter `OAUTH_LOGIN_PASSWORD` on that page.
-
-This is the password for your own Web Agent service, **not** your ChatGPT password. ChatGPT itself remains authenticated normally at chatgpt.com.
-
-## 11. OAuth endpoints
-
-```text
-GET  /.well-known/oauth-authorization-server
-GET  /oauth/authorize
-POST /oauth/authorize
-POST /oauth/token
-```
-
-The provider supports authorization-code flow, refresh tokens, client-secret basic/post, PKCE S256, and exact redirect URI allowlisting.
-
-## 12. Daily workflow
-
-After setup, you can say in your Custom GPT:
-
-```text
-Open this Figma node, inspect the hero section, then reproduce it on my website.
-Use the site's existing editor. Check desktop and mobile and keep fixing it until it matches.
-```
-
-Typical agent flow:
-
-```text
-1. list/open/switch to the Figma tab
-2. inspect the exact reference node
-3. screenshot reference evidence
-4. open/switch to the destination admin/editor tab
-5. inspect current UI and identify controls
-6. operate the website UI directly
-7. open the frontend/result tab
-8. capture screenshot + DOM/accessibility/styles + errors
-9. compare against reference
-10. return to editor and repair
-11. repeat for desktop/tablet/mobile
-```
-
-## 13. WordPress behavior
-
-There is no Web Agent WordPress plugin.
-
-For WordPress tasks the agent uses Chrome to:
-
-```text
-wp-admin
--> Pages / Posts / Media / Settings
--> Gutenberg or Elementor
--> Update / Save / Publish as requested
--> frontend preview
-```
-
-The same approach applies to Shopify, Webflow, and other web apps.
-
-## 14. Credentials explained
-
-```text
-OAUTH_CLIENT_SECRET
-OAUTH_SIGNING_SECRET
-OAUTH_LOGIN_PASSWORD
-```
-
-secure the OAuth service you own.
-
-```text
-AGENT_TOKEN
-```
-
-secures the Chrome Extension <-> Browser Backend connection.
-
-None of these credentials call the OpenAI API or create OpenAI API token charges.
-
-## 15. Production recommendations
-
-- Use HTTPS/WSS only.
-- Keep `INTERNAL_PORT` private.
-- Use long random secrets.
-- Keep exact OAuth redirect URI allowlists.
-- Rotate exposed secrets.
-- Add rate limiting and an audit log for production use.
-- Keep the browser action allowlist; do not add generic arbitrary JavaScript execution.
-- Require explicit user intent for destructive or consequential actions.
+- the bridge depends on the current `chatgpt.com` DOM;
+- closed Shadow DOM and some cross-origin frames can limit semantic inspection;
+- canvas-heavy apps may require screenshot/coordinate fallback;
+- Chrome-native UI such as `chrome://` pages, toolbar controls and native OS dialogs are not ordinary website targets;
+- automatic risk detection is a guardrail, not a guarantee, so use Ask mode for consequential tasks.
