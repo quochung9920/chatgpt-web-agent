@@ -1,5 +1,6 @@
 let socket = null;
 let reconnectTimer = null;
+let connectionGeneration = 0;
 
 const attachedTabs = new Set();
 const debugBuffers = new Map();
@@ -14,34 +15,48 @@ async function getConfig() {
 }
 
 async function connect() {
+  const generation = ++connectionGeneration;
   clearTimeout(reconnectTimer);
-  const { serverUrl, agentId, agentToken } = await getConfig();
-  if (!agentToken) return;
 
-  try {
-    socket?.close();
-  } catch {}
+  if (socket) {
+    socket.onclose = null;
+    socket.onerror = null;
+    try { socket.close(); } catch {}
+    socket = null;
+  }
+
+  const { serverUrl, agentId, agentToken } = await getConfig();
+  if (!agentToken || generation !== connectionGeneration) return;
 
   const base = serverUrl.replace(/\/$/, '').replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
-  socket = new WebSocket(`${base}/agent?id=${encodeURIComponent(agentId)}&token=${encodeURIComponent(agentToken)}`);
+  const nextSocket = new WebSocket(`${base}/agent?id=${encodeURIComponent(agentId)}&token=${encodeURIComponent(agentToken)}`);
+  socket = nextSocket;
 
-  socket.onmessage = async (event) => {
+  nextSocket.onmessage = async (event) => {
     let message;
     try { message = JSON.parse(event.data); } catch { return; }
     const { requestId, action, args = {} } = message;
     try {
       const result = await executeAction(action, args);
-      socket?.send(JSON.stringify({ requestId, ok: true, result }));
+      if (nextSocket.readyState === WebSocket.OPEN) {
+        nextSocket.send(JSON.stringify({ requestId, ok: true, result }));
+      }
     } catch (error) {
-      socket?.send(JSON.stringify({ requestId, ok: false, error: error?.message || String(error) }));
+      if (nextSocket.readyState === WebSocket.OPEN) {
+        nextSocket.send(JSON.stringify({ requestId, ok: false, error: error?.message || String(error) }));
+      }
     }
   };
 
-  socket.onclose = () => {
-    reconnectTimer = setTimeout(connect, 3000);
+  nextSocket.onclose = () => {
+    if (generation !== connectionGeneration) return;
+    if (socket === nextSocket) socket = null;
+    reconnectTimer = setTimeout(() => connect(), 3000);
   };
 
-  socket.onerror = () => socket?.close();
+  nextSocket.onerror = () => {
+    if (generation === connectionGeneration) nextSocket.close();
+  };
 }
 
 async function activeTab() {
