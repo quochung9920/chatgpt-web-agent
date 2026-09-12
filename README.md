@@ -1,111 +1,172 @@
 # ChatGPT Web Agent
 
-A bridge for using a normal ChatGPT account as a **design → build → Chrome QA → repair** agent for your own websites, without calling the OpenAI API.
+A browser-first agent bridge that lets a normal ChatGPT Custom GPT operate the user's own Chrome session directly through OAuth — without an OpenAI API key and without platform-specific plugins.
 
-## Version 0.3 architecture
-
-```text
-You sign in normally at chatgpt.com
-          |
-          v
-Custom GPT + Actions
-          |
-          | OAuth 2.0 authorization code
-          v
-OAuth Gateway
-          |
-          | private generated internal credential
-          v
-Web Agent backend
-     +----+----+
-     |         |
-     v         v
-Chrome      WordPress
-Extension    Plugin
-```
-
-The OAuth login is for **your Web Agent service**, not for OpenAI. Your ChatGPT account remains logged in at chatgpt.com and the model usage stays inside your ChatGPT plan/limits. This repository does not require an OpenAI API key.
-
-## Repository structure
+## Architecture
 
 ```text
-chatgpt-web-agent/
-├── openapi.yaml
-├── chatgpt-action/
-│   ├── openapi.yaml
-│   └── instructions.md
-├── server/
-│   ├── .env.example
-│   ├── package.json
-│   └── src/
-│       ├── oauth-gateway.js
-│       ├── oauth.js
-│       ├── index.js
-│       └── target-store.js
-├── chrome-extension/
-├── wordpress-plugin/
-└── docs/
-    └── SETUP.md
+ChatGPT at chatgpt.com
+        |
+        | OAuth 2.0
+        v
++-------------------------+
+| Web Agent OAuth Gateway |
++------------+------------+
+             |
+             | private internal auth
+             v
++-------------------------+
+| Browser Agent Backend   |
++------------+------------+
+             |
+             | WebSocket
+             v
++-------------------------+
+| Chrome Extension        |
++------------+------------+
+             |
+             v
+      Real Chrome session
+             |
+   +---------+----------+
+   |         |          |
+ Figma   WordPress   Shopify / any website
 ```
 
-## What 0.3 adds
+WordPress is **not** a special integration. If ChatGPT needs to edit WordPress, it opens `wp-admin` in Chrome and operates Gutenberg, Elementor, Media Library, settings, or other visible UI just like a human user.
 
-- OAuth 2.0 authorization-code gateway for Custom GPT Actions.
-- Access + refresh tokens signed by your own server.
-- Exact OAuth redirect allowlist.
-- Optional PKCE S256 verification.
-- Public ChatGPT-facing `/v1/*` routes require OAuth.
-- Existing backend is moved behind the gateway and receives only an internal credential.
-- The gateway proxies the Chrome WebSocket `/agent`, so the extension still uses the same public host.
-- `npm start` launches the OAuth gateway and automatically starts the existing backend.
+## Why browser-first
 
-## Existing implementation/QA capabilities
+The project is designed for tasks such as:
 
-### Chrome
+> Open this exact Figma section, reproduce it on my website, then inspect the result in Chrome and keep fixing it until desktop and mobile match.
+
+The same agent can work with WordPress, Elementor, Figma, Shopify, Webflow, dashboards, and other web apps without installing a server plugin for every platform.
+
+## Interaction model
+
+The extension supports two complementary modes.
+
+### DOM / accessibility mode
+
+Prefer this when the website exposes useful semantic elements:
+
+```text
+page.read
+page.accessibility
+page.inspect
+page.elements
+selector-based click/type
+```
+
+### Visual / coordinate mode
+
+Use this for canvas-heavy or custom interfaces such as Figma and some visual editors:
+
+```text
+page.screenshot
+page.elementAt
+page.click       x/y
+page.hover       x/y
+page.drag        x/y -> x/y
+page.doubleClick
+page.rightClick
+```
+
+The agent should inspect or screenshot before using uncertain coordinates.
+
+## Browser capabilities
 
 ```text
 tabs.list
+tabs.open
+tabs.switch
+tabs.close
+
 tab.active
 tab.navigate
 tab.reload
+tab.back
+tab.forward
+
 page.wait
 page.read
 page.inspect
 page.elements
+page.elementAt
+page.accessibility
+
 page.click
+page.doubleClick
+page.rightClick
+page.hover
 page.type
+page.key
 page.scroll
+page.drag
+page.upload
+
 page.viewport.get
 page.viewport.set
 page.viewport.clear
 page.screenshot
 page.elementScreenshot
+
 debug.start
 debug.logs
 debug.clear
 debug.stop
 ```
 
-The extension supports viewport emulation, computed-style/bounding-box inspection, full-page/element screenshots, console diagnostics, and network diagnostics.
+`page.upload` can place file data supplied by the current task into an HTML file input. It does not grant arbitrary filesystem access.
 
-### WordPress
+## Design verification loop
 
-- inspect site/theme/registered blocks;
-- list/read/create/update pages;
-- parse Gutenberg block trees;
-- search/import media;
-- maintain a reversible Web-Agent-owned CSS layer.
+The server keeps optional implementation targets and visual verification state:
 
-### Visual repair loop
+```text
+reference
+   -> inspect destination
+   -> operate website UI
+   -> screenshot
+   -> DOM/style/error inspection
+   -> compare
+   -> repair
+   -> repeat desktop/tablet/mobile
+```
 
-- persistent implementation targets;
-- desktop/tablet/mobile verification state;
-- screenshot capture;
-- image similarity and pixel-difference metrics;
-- target states: `draft → building → verifying → repairing → complete`;
-- a target reaches `complete` only when all required viewports pass.
+A target only becomes `complete` when every configured viewport passes.
+
+## Repository structure
+
+```text
+chatgpt-web-agent/
+├── chrome-extension/
+│   ├── manifest.json
+│   ├── background.js
+│   ├── options.html
+│   └── options.js
+├── server/
+│   ├── .env.example
+│   ├── package.json
+│   └── src/
+│       ├── browser-backend.js
+│       ├── oauth.js
+│       ├── oauth-gateway.js
+│       └── target-store.js
+├── chatgpt-action/
+│   ├── openapi.yaml
+│   └── instructions.md
+├── docs/
+│   └── SETUP.md
+└── openapi.yaml
+```
+
+There is intentionally no WordPress plugin in the architecture.
 
 ## Quick start
+
+### 1. Server
 
 ```bash
 cd server
@@ -114,77 +175,90 @@ npm install
 npm start
 ```
 
-Configure the OAuth variables in `.env`, especially:
+Configure OAuth and Chrome agent secrets in `.env`. These are credentials for your own Web Agent service; they are not OpenAI API keys.
+
+### 2. Chrome extension
+
+Open:
 
 ```text
-PUBLIC_BASE_URL=https://agent.example.com
-OAUTH_CLIENT_ID=chatgpt-web-agent
-OAUTH_CLIENT_SECRET=...
-OAUTH_SIGNING_SECRET=...
-OAUTH_LOGIN_PASSWORD=...
-OAUTH_ALLOWED_REDIRECT_URIS=<callback URL shown by the GPT Action builder>
+chrome://extensions
 ```
 
-Then install:
+Enable Developer Mode, choose **Load unpacked**, and select `chrome-extension/`.
 
-1. `wordpress-plugin/` in WordPress and copy its generated token into `WORDPRESS_TOKEN`.
-2. `chrome-extension/` with Chrome **Load unpacked** and configure the public gateway URL plus `AGENT_ID` / `AGENT_TOKEN`.
-3. Create a Custom GPT, paste `chatgpt-action/instructions.md` into its Instructions, and import `chatgpt-action/openapi.yaml` as an Action.
-4. Configure that Action to use OAuth with the URLs shown below.
+In the extension Options page configure:
 
 ```text
-Authorization URL: https://agent.example.com/oauth/authorize
-Token URL:         https://agent.example.com/oauth/token
-Client ID:         value of OAUTH_CLIENT_ID
-Client Secret:     value of OAUTH_CLIENT_SECRET
-Scope:             agent:control
+Server URL: wss://agent.your-domain.com
+Agent ID: desktop-chrome
+Agent Token: same AGENT_TOKEN as the server
 ```
 
-When ChatGPT first uses the Action, it opens the Web Agent authorization page. Enter `OAUTH_LOGIN_PASSWORD` once to authorize the GPT. Do **not** enter your ChatGPT password there.
+For local development, use `ws://localhost:8787`.
 
-## Intended workflow
+The extension requests Chrome's `debugger` permission for CDP input, viewport emulation, accessibility inspection, screenshots, console capture, and network diagnostics.
+
+### 3. Custom GPT
+
+Create a Custom GPT in ChatGPT and:
+
+- paste `chatgpt-action/instructions.md` into its Instructions;
+- import `chatgpt-action/openapi.yaml` as its Action schema;
+- replace `https://agent.example.com` with your public HTTPS Web Agent URL;
+- configure Action authentication as OAuth using `/oauth/authorize` and `/oauth/token`;
+- copy the callback URL shown by the GPT builder into `OAUTH_ALLOWED_REDIRECT_URIS`.
+
+The user remains logged in to ChatGPT normally at chatgpt.com. No OpenAI API key is used by this project.
+
+See [`docs/SETUP.md`](docs/SETUP.md) for full setup.
+
+## Example workflow
+
+User:
 
 ```text
-"Build this WordPress section from this Figma node."
-        |
-        v
-Inspect exact Figma node / HTML reference
-        |
-        v
-Inspect current WordPress implementation
-        |
-        v
-Create implementation TARGET
-        |
-        v
-Build Gutenberg + assets + Web Agent CSS
-        |
-        v
-Open real Chrome and capture QA evidence
-        |
-        v
-Compare reference vs implementation
-        |
-   mismatch? ---- yes ----> repair and verify again
-        |
-        no
-        v
-Verify remaining viewports -> complete
+Open this Figma node and recreate the hero on my WordPress homepage.
+Use Elementor if that page is using Elementor. Check desktop and mobile yourself.
 ```
 
-If a Figma connector is available to the GPT, use the exact node-specific design context. Otherwise the agent can use the user's logged-in Chrome session to navigate to the Figma node for browser-based inspection. Passwords for Figma/WordPress should never be sent to the GPT; use the user's existing browser sessions or the WordPress bridge.
-
-## Security boundaries
+Agent flow:
 
 ```text
-Custom GPT -- OAuth access token --> OAuth Gateway
-OAuth Gateway -- generated internal token --> private backend
-Backend -- AGENT_TOKEN --> Chrome Extension
-Backend -- WORDPRESS_TOKEN --> WordPress Plugin
+open/switch Figma tab
+-> inspect exact node
+-> capture reference
+-> open wp-admin tab
+-> navigate through WordPress/Elementor UI
+-> build section
+-> open frontend tab
+-> screenshot + inspect
+-> compare
+-> return to editor and repair
+-> repeat until required viewports pass
 ```
 
-`AGENT_TOKEN`, `WORDPRESS_TOKEN`, `OAUTH_CLIENT_SECRET`, and `OAUTH_SIGNING_SECRET` are credentials for your own infrastructure. They are not OpenAI API keys and do not create OpenAI API usage charges.
+No WordPress-specific REST bridge is involved.
 
-The browser action surface remains allowlisted and does not expose generic arbitrary JavaScript execution. Destructive WordPress/plugin/theme operations are intentionally excluded.
+## Security model
 
-See [`docs/SETUP.md`](docs/SETUP.md) for the complete setup process.
+```text
+ChatGPT Custom GPT -- OAuth --> Web Agent Gateway
+Web Agent Gateway -- private internal key --> Browser Backend
+Browser Backend -- AGENT_TOKEN/WebSocket --> Chrome Extension
+Chrome Extension --> user-approved Chrome session
+```
+
+Safeguards:
+
+- browser actions are explicitly allowlisted;
+- arbitrary remote JavaScript execution is not exposed;
+- OAuth is separate from the user's ChatGPT password;
+- Chrome/website passwords are not sent to ChatGPT by this project;
+- file upload accepts supplied task data only and does not expose the local filesystem;
+- destructive external actions should only be taken when explicitly requested;
+- HTTPS/WSS should be used in production.
+
+## Version
+
+`0.4.0` — browser-agent architecture. Platform-specific WordPress integration was removed from the main project.
