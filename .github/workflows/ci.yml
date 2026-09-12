@@ -29,6 +29,7 @@ jobs:
           node --check chrome-extension/service-worker-entry.js
           node --check chrome-extension/sidepanel-scope.js
           node --check chrome-extension/stream-model-bridge.js
+          node --check chrome-extension/hybrid-agent-runtime.js
           node --check chrome-extension/local-browser-tools.js
           node --check chrome-extension/tab-group-session.js
           node --check chrome-extension/group-scoped-tools.js
