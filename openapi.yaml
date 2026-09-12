@@ -1,10 +1,11 @@
 openapi: 3.1.0
 info:
-  title: ChatGPT Web Agent OAuth API
-  version: 0.3.0
+  title: ChatGPT Web Agent Browser API
+  version: 0.4.0
   description: >-
-    OAuth-protected API for a user-owned Chrome session and WordPress site.
-    The full Custom GPT schema is also maintained at chatgpt-action/openapi.yaml.
+    OAuth-protected browser-agent API for controlling a user-approved Chrome
+    session directly. The same Custom GPT schema is maintained in
+    chatgpt-action/openapi.yaml.
 servers:
   - url: https://agent.example.com
 security:
@@ -14,19 +15,19 @@ paths:
     get:
       security: []
       operationId: webAgentHealth
-      summary: Check the OAuth gateway
+      summary: Check the Web Agent OAuth gateway
       responses:
-        '200': { description: Healthy }
+        '200': { description: Gateway status }
   /v1/browser/status:
     get:
       operationId: browserStatus
-      summary: Check whether the Chrome extension is connected
+      summary: Check whether the user's Chrome extension is connected
       responses:
-        '200': { description: Browser status }
+        '200': { description: Browser connection status }
   /v1/browser/action:
     post:
       operationId: browserAction
-      summary: Execute one approved Chrome action
+      summary: Inspect or operate the user's approved Chrome session
       requestBody:
         required: true
         content:
@@ -37,78 +38,27 @@ paths:
               properties:
                 action:
                   type: string
-                  enum: [tabs.list, tab.active, tab.navigate, tab.reload, page.wait, page.read, page.inspect, page.elements, page.click, page.type, page.scroll, page.viewport.get, page.viewport.set, page.viewport.clear, page.screenshot, page.elementScreenshot, debug.start, debug.logs, debug.clear, debug.stop]
+                  enum: [tabs.list, tabs.open, tabs.switch, tabs.close, tab.active, tab.navigate, tab.reload, tab.back, tab.forward, page.wait, page.read, page.inspect, page.elements, page.elementAt, page.accessibility, page.click, page.doubleClick, page.rightClick, page.hover, page.type, page.key, page.scroll, page.drag, page.upload, page.viewport.get, page.viewport.set, page.viewport.clear, page.screenshot, page.elementScreenshot, debug.start, debug.logs, debug.clear, debug.stop]
                 args:
                   type: object
                   additionalProperties: true
       responses:
         '200': { description: Browser action result }
-  /v1/wordpress/site:
-    get:
-      operationId: wordpressSite
-      summary: Inspect the connected WordPress site
-      responses:
-        '200': { description: Site details }
-  /v1/wordpress/pages:
-    get:
-      operationId: wordpressPages
-      summary: List or search WordPress pages
-      parameters:
-        - in: query
-          name: search
-          schema: { type: string }
-        - in: query
-          name: per_page
-          schema: { type: integer, minimum: 1, maximum: 100 }
-      responses:
-        '200': { description: Pages }
-    post:
-      operationId: wordpressCreatePage
-      summary: Create a WordPress page
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/PageWrite' }
-      responses:
-        '201': { description: Page created }
-  /v1/wordpress/pages/{id}:
-    get:
-      operationId: wordpressGetPage
-      summary: Read a WordPress page
-      parameters:
-        - $ref: '#/components/parameters/PageId'
-      responses:
-        '200': { description: Page }
-    patch:
-      operationId: wordpressUpdatePage
-      summary: Update a WordPress page
-      parameters:
-        - $ref: '#/components/parameters/PageId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/PageWrite' }
-      responses:
-        '200': { description: Page updated }
   /v1/targets:
     post:
       operationId: createImplementationTarget
-      summary: Create a Figma, HTML, image, or website implementation target
+      summary: Create a design or website implementation target
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              additionalProperties: true
+            schema: { $ref: '#/components/schemas/TargetCreate' }
       responses:
         '201': { description: Target created }
   /v1/targets/{id}:
     get:
       operationId: getImplementationTarget
-      summary: Read target and verification state
+      summary: Read target state and verification progress
       parameters:
         - $ref: '#/components/parameters/TargetId'
       responses:
@@ -130,29 +80,25 @@ paths:
   /v1/verification/capture:
     post:
       operationId: captureImplementation
-      summary: Capture Chrome visual, DOM, styles, console, and network evidence
+      summary: Capture screenshot, DOM, styles, console, and network evidence
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              additionalProperties: true
+            schema: { $ref: '#/components/schemas/CaptureRequest' }
       responses:
         '200': { description: Observation }
   /v1/verification/compare:
     post:
       operationId: compareImplementation
-      summary: Compare implementation with a reference and update repair status
+      summary: Compare browser output with a reference image
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              additionalProperties: true
+            schema: { $ref: '#/components/schemas/CompareRequest' }
       responses:
-        '200': { description: Comparison }
+        '200': { description: Comparison and target state }
 components:
   securitySchemes:
     webAgentOAuth:
@@ -162,23 +108,56 @@ components:
           authorizationUrl: https://agent.example.com/oauth/authorize
           tokenUrl: https://agent.example.com/oauth/token
           scopes:
-            agent:control: Inspect, build, verify, and repair the connected website
+            agent:control: Inspect and operate the user's approved Chrome session
   parameters:
-    PageId:
-      in: path
-      name: id
-      required: true
-      schema: { type: integer }
     TargetId:
       in: path
       name: id
       required: true
       schema: { type: string }
   schemas:
-    PageWrite:
+    Viewport:
       type: object
       properties:
-        title: { type: string }
-        slug: { type: string }
-        status: { type: string, enum: [draft, publish, pending, private] }
-        content: { type: string }
+        label: { type: string }
+        width: { type: integer, minimum: 240, maximum: 3840 }
+        height: { type: integer, minimum: 320, maximum: 2160 }
+        deviceScaleFactor: { type: number, minimum: 0.5, maximum: 4 }
+        mobile: { type: boolean }
+    TargetCreate:
+      type: object
+      properties:
+        name: { type: string }
+        source: { type: object, additionalProperties: true }
+        destination: { type: object, additionalProperties: true }
+        viewports:
+          type: array
+          maxItems: 8
+          items: { $ref: '#/components/schemas/Viewport' }
+        notes: { type: string }
+    CaptureRequest:
+      type: object
+      properties:
+        targetId: { type: string }
+        url: { type: string, format: uri }
+        viewport: { $ref: '#/components/schemas/Viewport' }
+        selectors:
+          type: array
+          maxItems: 20
+          items: { type: string }
+        includeDebug: { type: boolean, default: true }
+        errorsOnly: { type: boolean }
+        fullPage: { type: boolean }
+        settleMs: { type: integer, minimum: 0, maximum: 5000 }
+        maxLength: { type: integer, minimum: 1000, maximum: 100000 }
+    CompareRequest:
+      type: object
+      properties:
+        targetId: { type: string }
+        referenceUrl: { type: string, format: uri }
+        referenceDataUrl: { type: string }
+        candidateDataUrl: { type: string }
+        passThreshold: { type: number, minimum: 0, maximum: 1, default: 0.92 }
+        includeDiff: { type: boolean }
+        includeCandidateImage: { type: boolean }
+        capture: { $ref: '#/components/schemas/CaptureRequest' }
