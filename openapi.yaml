@@ -1,32 +1,32 @@
 openapi: 3.1.0
 info:
-  title: ChatGPT Web Agent API
-  version: 0.2.0
-  description: Secure control API for WordPress implementation, Chrome inspection, targets, and visual verification.
+  title: ChatGPT Web Agent OAuth API
+  version: 0.3.0
+  description: >-
+    OAuth-protected API for a user-owned Chrome session and WordPress site.
+    The full Custom GPT schema is also maintained at chatgpt-action/openapi.yaml.
 servers:
   - url: https://agent.example.com
 security:
-  - bearerAuth: []
+  - webAgentOAuth: [agent:control]
 paths:
   /health:
     get:
       security: []
-      operationId: health
-      summary: Check control server health
+      operationId: webAgentHealth
+      summary: Check the OAuth gateway
       responses:
         '200': { description: Healthy }
-
   /v1/browser/status:
     get:
       operationId: browserStatus
-      summary: Check whether the Chrome agent is connected
+      summary: Check whether the Chrome extension is connected
       responses:
-        '200': { description: Browser agent status }
-
+        '200': { description: Browser status }
   /v1/browser/action:
     post:
       operationId: browserAction
-      summary: Execute one whitelisted browser or inspection action
+      summary: Execute one approved Chrome action
       requestBody:
         required: true
         content:
@@ -37,103 +37,22 @@ paths:
               properties:
                 action:
                   type: string
-                  enum:
-                    - tabs.list
-                    - tab.active
-                    - tab.navigate
-                    - tab.reload
-                    - page.wait
-                    - page.read
-                    - page.inspect
-                    - page.elements
-                    - page.click
-                    - page.type
-                    - page.scroll
-                    - page.viewport.get
-                    - page.viewport.set
-                    - page.viewport.clear
-                    - page.screenshot
-                    - page.elementScreenshot
-                    - debug.start
-                    - debug.logs
-                    - debug.clear
-                    - debug.stop
+                  enum: [tabs.list, tab.active, tab.navigate, tab.reload, page.wait, page.read, page.inspect, page.elements, page.click, page.type, page.scroll, page.viewport.get, page.viewport.set, page.viewport.clear, page.screenshot, page.elementScreenshot, debug.start, debug.logs, debug.clear, debug.stop]
                 args:
                   type: object
                   additionalProperties: true
       responses:
-        '200': { description: Action result }
-
-  /v1/targets:
-    post:
-      operationId: createImplementationTarget
-      summary: Create a persistent Figma, HTML, image, or website implementation target
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/TargetCreate' }
-      responses:
-        '201': { description: Target created }
-
-  /v1/targets/{id}:
-    get:
-      operationId: getImplementationTarget
-      summary: Read an implementation target and latest QA state
-      parameters:
-        - $ref: '#/components/parameters/TargetId'
-      responses:
-        '200': { description: Target details }
-    patch:
-      operationId: updateImplementationTarget
-      summary: Update target status, source, destination, viewports, or notes
-      parameters:
-        - $ref: '#/components/parameters/TargetId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-      responses:
-        '200': { description: Updated target }
-
-  /v1/verification/capture:
-    post:
-      operationId: captureImplementation
-      summary: Open the destination in Chrome, emulate a viewport, inspect selectors, capture debug errors, and screenshot the result
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/CaptureRequest' }
-      responses:
-        '200': { description: Browser observation with screenshot and inspection data }
-
-  /v1/verification/compare:
-    post:
-      operationId: compareImplementation
-      summary: Compare a captured implementation with a reference image and update target repair/complete state
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/CompareRequest' }
-      responses:
-        '200': { description: Similarity metrics and optional diff image }
-
+        '200': { description: Browser action result }
   /v1/wordpress/site:
     get:
       operationId: wordpressSite
-      summary: Read WordPress site, theme, features, and registered block information
+      summary: Inspect the connected WordPress site
       responses:
         '200': { description: Site details }
-
   /v1/wordpress/pages:
     get:
       operationId: wordpressPages
-      summary: List WordPress pages
+      summary: List or search WordPress pages
       parameters:
         - in: query
           name: search
@@ -142,10 +61,10 @@ paths:
           name: per_page
           schema: { type: integer, minimum: 1, maximum: 100 }
       responses:
-        '200': { description: Page list }
+        '200': { description: Pages }
     post:
       operationId: wordpressCreatePage
-      summary: Create a WordPress page using raw Gutenberg block markup when needed
+      summary: Create a WordPress page
       requestBody:
         required: true
         content:
@@ -153,15 +72,14 @@ paths:
             schema: { $ref: '#/components/schemas/PageWrite' }
       responses:
         '201': { description: Page created }
-
   /v1/wordpress/pages/{id}:
     get:
       operationId: wordpressGetPage
-      summary: Get a WordPress page including raw block content
+      summary: Read a WordPress page
       parameters:
         - $ref: '#/components/parameters/PageId'
       responses:
-        '200': { description: Page details }
+        '200': { description: Page }
     patch:
       operationId: wordpressUpdatePage
       summary: Update a WordPress page
@@ -173,77 +91,78 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/PageWrite' }
       responses:
-        '200': { description: Updated page }
-
-  /v1/wordpress/pages/{id}/blocks:
-    get:
-      operationId: wordpressGetPageBlocks
-      summary: Parse a page into its Gutenberg block tree
-      parameters:
-        - $ref: '#/components/parameters/PageId'
-      responses:
-        '200': { description: Parsed block tree }
-
-  /v1/wordpress/media:
-    get:
-      operationId: wordpressMedia
-      summary: Search WordPress image attachments
-      parameters:
-        - in: query
-          name: search
-          schema: { type: string }
-        - in: query
-          name: per_page
-          schema: { type: integer, minimum: 1, maximum: 100 }
-      responses:
-        '200': { description: Media list }
-
-  /v1/wordpress/media/import:
+        '200': { description: Page updated }
+  /v1/targets:
     post:
-      operationId: wordpressImportMedia
-      summary: Import a public HTTPS image into the WordPress media library
+      operationId: createImplementationTarget
+      summary: Create a Figma, HTML, image, or website implementation target
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [url]
-              properties:
-                url: { type: string, format: uri }
-                filename: { type: string }
-                title: { type: string }
-                alt: { type: string }
+              additionalProperties: true
       responses:
-        '201': { description: Imported attachment }
-
-  /v1/wordpress/styles/agent-css:
+        '201': { description: Target created }
+  /v1/targets/{id}:
     get:
-      operationId: wordpressGetAgentCss
-      summary: Read CSS owned by ChatGPT Web Agent
+      operationId: getImplementationTarget
+      summary: Read target and verification state
+      parameters:
+        - $ref: '#/components/parameters/TargetId'
       responses:
-        '200': { description: Agent CSS }
-    put:
-      operationId: wordpressUpdateAgentCss
-      summary: Replace the reversible agent-owned CSS layer
+        '200': { description: Target }
+    patch:
+      operationId: updateImplementationTarget
+      summary: Update target state
+      parameters:
+        - $ref: '#/components/parameters/TargetId'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [css]
-              properties:
-                css: { type: string }
+              additionalProperties: true
       responses:
-        '200': { description: CSS updated }
-
+        '200': { description: Target updated }
+  /v1/verification/capture:
+    post:
+      operationId: captureImplementation
+      summary: Capture Chrome visual, DOM, styles, console, and network evidence
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200': { description: Observation }
+  /v1/verification/compare:
+    post:
+      operationId: compareImplementation
+      summary: Compare implementation with a reference and update repair status
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200': { description: Comparison }
 components:
   securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-
+    webAgentOAuth:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://agent.example.com/oauth/authorize
+          tokenUrl: https://agent.example.com/oauth/token
+          scopes:
+            agent:control: Inspect, build, verify, and repair the connected website
   parameters:
     PageId:
       in: path
@@ -254,73 +173,12 @@ components:
       in: path
       name: id
       required: true
-      schema: { type: string, format: uuid }
-
+      schema: { type: string }
   schemas:
     PageWrite:
       type: object
       properties:
         title: { type: string }
         slug: { type: string }
-        status:
-          type: string
-          enum: [draft, publish, pending, private]
-        content:
-          type: string
-          description: Raw Gutenberg block markup or WordPress post content.
-
-    Viewport:
-      type: object
-      required: [width, height]
-      properties:
-        label: { type: string }
-        width: { type: integer, minimum: 240, maximum: 3840 }
-        height: { type: integer, minimum: 320, maximum: 2160 }
-        deviceScaleFactor: { type: number, minimum: 0.5, maximum: 4, default: 1 }
-        mobile: { type: boolean, default: false }
-
-    TargetCreate:
-      type: object
-      properties:
-        name: { type: string }
-        source:
-          type: object
-          description: Reference definition. Typical fields include type, url, nodeId, referenceImageUrl, and notes.
-          additionalProperties: true
-        destination:
-          type: object
-          description: Implementation destination. Typical fields include type=wordpress, pageId, url, and selectors.
-          additionalProperties: true
-        viewports:
-          type: array
-          maxItems: 8
-          items: { $ref: '#/components/schemas/Viewport' }
-        notes: { type: string }
-
-    CaptureRequest:
-      type: object
-      properties:
-        targetId: { type: string, format: uuid }
-        url: { type: string, format: uri }
-        viewport: { $ref: '#/components/schemas/Viewport' }
-        selectors:
-          type: array
-          maxItems: 20
-          items: { type: string }
-        fullPage: { type: boolean, default: false }
-        includeDebug: { type: boolean, default: true }
-        errorsOnly: { type: boolean, default: true }
-        settleMs: { type: integer, minimum: 0, maximum: 5000, default: 500 }
-        maxLength: { type: integer, minimum: 1000, maximum: 100000, default: 20000 }
-
-    CompareRequest:
-      type: object
-      properties:
-        targetId: { type: string, format: uuid }
-        referenceUrl: { type: string, format: uri }
-        referenceDataUrl: { type: string }
-        candidateDataUrl: { type: string }
-        capture: { $ref: '#/components/schemas/CaptureRequest' }
-        passThreshold: { type: number, minimum: 0, maximum: 1, default: 0.92 }
-        includeDiff: { type: boolean, default: false }
-        includeCandidateImage: { type: boolean, default: false }
+        status: { type: string, enum: [draft, publish, pending, private] }
+        content: { type: string }
