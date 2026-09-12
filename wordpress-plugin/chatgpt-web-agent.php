@@ -268,7 +268,7 @@ final class ChatGPT_Web_Agent {
         }
 
         $host = strtolower((string) ($parts['host'] ?? ''));
-        if (!$host || $host === 'localhost' || str_ends_with($host, '.local')) {
+        if (!$host || $host === 'localhost' || substr($host, -6) === '.local') {
             return new WP_Error('invalid_media_url', 'Local media URLs are not allowed.', ['status' => 400]);
         }
 
