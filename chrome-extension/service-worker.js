@@ -1,4 +1,8 @@
 import './background.js';
+import { executeLocalBrowserTool, isLocalAgentTool, LOCAL_AGENT_TOOLS } from './local-browser-tools.js';
+
+const MAX_AGENT_STEPS = 24;
+const activeRuns = new Map();
 
 async function enableSidePanel() {
   try {
@@ -30,9 +34,7 @@ async function resolveChatGptTab(preferredTabId = null) {
         await chrome.storage.local.set({ chatgptTabId: tab.id });
         return tab;
       }
-    } catch {
-      // Try another candidate.
-    }
+    } catch {}
   }
 
   const tabs = await listChatGptTabs();
@@ -63,7 +65,7 @@ async function sendBridgeMessage(tabId, message) {
     const text = String(error?.message || error || '');
     if (!text.includes('Receiving end does not exist') && !text.includes('Could not establish connection')) throw error;
     await chrome.scripting.executeScript({ target: { tabId }, files: ['chatgpt-content.js'] });
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    await new Promise((resolve) => setTimeout(resolve, 100));
     return chrome.tabs.sendMessage(tabId, message);
   }
 }
@@ -112,6 +114,169 @@ async function openNewChatGptTab(active = false) {
   return { tab: await chrome.tabs.get(tab.id), bridge };
 }
 
+function cleanAgentVisibleText(text) {
+  return String(text || '')
+    .replace(/<web_agent>[\s\S]*?<\/web_agent>/gi, '')
+    .replace(/```(?:json)?\s*\{[\s\S]*?\}\s*```/gi, '')
+    .trim();
+}
+
+function parseAgentDirective(text) {
+  const source = String(text || '');
+  const tagged = [...source.matchAll(/<web_agent>\s*([\s\S]*?)\s*<\/web_agent>/gi)].at(-1);
+  const candidates = [];
+  if (tagged?.[1]) candidates.push(tagged[1]);
+
+  const fenced = [...source.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/gi)];
+  for (const match of fenced.reverse()) candidates.push(match[1]);
+
+  for (const candidate of candidates) {
+    try {
+      const data = JSON.parse(candidate.trim());
+      if (data?.type === 'tool_call' && data.tool) return data;
+      if (data?.type === 'final') return data;
+    } catch {}
+  }
+  return null;
+}
+
+function safeJson(value, maxLength = 18000) {
+  let serialized;
+  try {
+    serialized = JSON.stringify(value, null, 2);
+  } catch {
+    serialized = JSON.stringify({ error: 'unserializable_result' });
+  }
+  if (serialized.length > maxLength) serialized = `${serialized.slice(0, maxLength)}\n...TRUNCATED...`;
+  return serialized;
+}
+
+function describeTools() {
+  return `Available browser tools:\n${LOCAL_AGENT_TOOLS.map((tool) => `- ${tool}`).join('\n')}\n\nImportant argument patterns:\n- tabs.switch/tabs.close: {"tabId": number}\n- tab.navigate: {"tabId": number, "url": "https://..."}\n- page.read/page.accessibility/page.screenshot: {"tabId": number}\n- page.inspect/page.type: {"tabId": number, "selector": "CSS", ...}\n- page.click: {"tabId": number, "selector": "CSS"} OR {"tabId": number, "x": number, "y": number}\n- page.drag: {"tabId": number, "fromX": number, "fromY": number, "toX": number, "toY": number}\n- page.viewport.set: {"tabId": number, "width": number, "height": number, "mobile": boolean}`;
+}
+
+function buildInitialAgentPrompt(task, tabs, activeTabId) {
+  return `[WEB_AGENT_SYSTEM]\nYou are now operating the user's REAL Chrome browser through the ChatGPT Web Agent extension. You are not merely giving instructions. You can inspect tabs and directly perform browser actions.\n\nDo NOT ask the user to paste a URL, send a screenshot, or manually describe a page when the browser tools can inspect it. Do NOT claim an action succeeded until a tool result confirms it. Prefer DOM/accessibility inspection first; use screenshots when visual understanding is needed.\n\nCURRENT BROWSER STATE\nActive tab id: ${activeTabId ?? 'unknown'}\nTabs:\n${safeJson(tabs, 12000)}\n\n${describeTools()}\n\nTOOL PROTOCOL\nWhen you need exactly one browser action, your response MUST end with exactly one block:\n<web_agent>\n{"type":"tool_call","tool":"page.read","args":{"tabId":123}}\n</web_agent>\n\nAfter the extension executes it, you will receive [WEB_AGENT_TOOL_RESULT]. Then decide the next action. Continue until the user's task is actually complete.\n\nWhen finished, end with:\n<web_agent>\n{"type":"final","message":"Concise completion summary"}\n</web_agent>\n\nIf an action fails, inspect the error/result and try a safer alternative instead of immediately asking the user. Keep each turn to ONE tool call.\n\nUSER TASK\n${String(task || '').trim()}`;
+}
+
+function buildToolResultPrompt(step, tool, args, result, error = null) {
+  return `[WEB_AGENT_TOOL_RESULT]\nStep: ${step}\nTool: ${tool}\nArgs: ${safeJson(args, 5000)}\nStatus: ${error ? 'ERROR' : 'OK'}\nResult:\n${safeJson(error ? { error } : result, 16000)}\n\nContinue the browser task. Use one <web_agent> tool call, or return a final block only when the task is genuinely complete.`;
+}
+
+async function emitAgentEvent(event) {
+  try {
+    await chrome.runtime.sendMessage({ type: 'agent.event', event });
+  } catch {}
+}
+
+function pickWorkingTab(tabs, chatgptTabId) {
+  const candidates = tabs.filter((tab) => tab.id !== chatgptTabId && /^https?:\/\//i.test(tab.url || ''));
+  return candidates.find((tab) => tab.active) || candidates[0] || null;
+}
+
+function withDefaultTabId(tool, args, workingTabId) {
+  const next = { ...(args || {}) };
+  if (workingTabId && (tool.startsWith('page.') || ['tab.navigate', 'tab.reload', 'tab.back', 'tab.forward'].includes(tool)) && next.tabId == null) {
+    next.tabId = workingTabId;
+  }
+  return next;
+}
+
+async function sendPromptThroughBridge(tabId, text, { imageDataUrl = '', timeoutMs = 180000 } = {}) {
+  const response = await sendBridgeMessage(tabId, {
+    type: 'chatgpt.bridge.send',
+    text,
+    imageDataUrl,
+    timeoutMs
+  });
+  if (!response?.ok) throw new Error(response?.error || 'chatgpt_send_failed');
+  return response;
+}
+
+async function runAgentTask(message) {
+  const task = String(message.task || '').trim();
+  if (!task) throw new Error('empty_agent_task');
+
+  const chatTab = await resolveChatGptTab(message.tabId);
+  if (!chatTab) throw new Error('chatgpt_tab_not_found');
+  await ensureChatGptBridge(chatTab.id);
+
+  const runId = crypto.randomUUID();
+  const state = { cancelled: false, chatgptTabId: chatTab.id, workingTabId: null };
+  activeRuns.set(runId, state);
+
+  try {
+    const tabs = await executeLocalBrowserTool('tabs.list', {});
+    const working = pickWorkingTab(tabs, chatTab.id);
+    state.workingTabId = working?.id || null;
+
+    await emitAgentEvent({ runId, kind: 'start', message: 'Agent connected to Chrome', workingTabId: state.workingTabId });
+    await emitAgentEvent({ runId, kind: 'observe', message: `Found ${tabs.length} browser tabs` });
+
+    let assistant = await sendPromptThroughBridge(chatTab.id, buildInitialAgentPrompt(task, tabs, state.workingTabId));
+    let lastText = assistant.text || '';
+
+    for (let step = 1; step <= MAX_AGENT_STEPS; step += 1) {
+      if (state.cancelled) throw new Error('agent_stopped');
+
+      const directive = parseAgentDirective(lastText);
+      const visibleText = cleanAgentVisibleText(lastText);
+      if (visibleText) await emitAgentEvent({ runId, kind: 'reasoning', message: visibleText.slice(0, 600) });
+
+      if (!directive) {
+        await emitAgentEvent({ runId, kind: 'final', message: visibleText || 'ChatGPT finished without requesting another browser action.' });
+        return { runId, tabId: chatTab.id, text: visibleText || lastText, steps: step - 1 };
+      }
+
+      if (directive.type === 'final') {
+        const finalText = String(directive.message || visibleText || 'Task complete.').trim();
+        await emitAgentEvent({ runId, kind: 'final', message: finalText });
+        return { runId, tabId: chatTab.id, text: finalText, steps: step - 1 };
+      }
+
+      const tool = String(directive.tool || '');
+      if (!isLocalAgentTool(tool)) {
+        lastText = (await sendPromptThroughBridge(chatTab.id, buildToolResultPrompt(step, tool, directive.args || {}, null, 'tool_not_allowed'))).text || '';
+        continue;
+      }
+
+      const args = withDefaultTabId(tool, directive.args || {}, state.workingTabId);
+      await emitAgentEvent({ runId, kind: 'tool', step, tool, message: `${tool}${args.tabId ? ` · tab ${args.tabId}` : ''}` });
+
+      let result;
+      let error = null;
+      try {
+        result = await executeLocalBrowserTool(tool, args);
+        if (tool === 'tabs.switch' && result?.id) state.workingTabId = result.id;
+        if (tool === 'tabs.open' && result?.id) state.workingTabId = result.id;
+        if (tool === 'tab.navigate' && result?.id) state.workingTabId = result.id;
+        await emitAgentEvent({ runId, kind: 'tool_result', step, tool, ok: true, message: `${tool} completed` });
+      } catch (toolError) {
+        error = toolError?.message || String(toolError);
+        await emitAgentEvent({ runId, kind: 'tool_result', step, tool, ok: false, message: `${tool}: ${error}` });
+      }
+
+      if (state.cancelled) throw new Error('agent_stopped');
+
+      let imageDataUrl = '';
+      let resultForModel = result;
+      if (!error && tool === 'page.screenshot' && result?.dataUrl) {
+        imageDataUrl = result.dataUrl;
+        resultForModel = { ...result, dataUrl: '[SCREENSHOT_ATTACHED_TO_THIS_MESSAGE]' };
+        await emitAgentEvent({ runId, kind: 'observe', step, message: 'Screenshot captured and sent to ChatGPT vision' });
+      }
+
+      const nextPrompt = buildToolResultPrompt(step, tool, args, resultForModel, error);
+      assistant = await sendPromptThroughBridge(chatTab.id, nextPrompt, { imageDataUrl });
+      lastText = assistant.text || '';
+    }
+
+    throw new Error('agent_max_steps_reached');
+  } finally {
+    activeRuns.delete(runId);
+  }
+}
+
 async function handleChatGptMessage(message) {
   switch (message.type) {
     case 'chatgpt.status':
@@ -144,10 +309,7 @@ async function handleChatGptMessage(message) {
     case 'chatgpt.sync': {
       const tab = await resolveChatGptTab(message.tabId);
       if (!tab) throw new Error('chatgpt_tab_not_found');
-      const response = await sendBridgeMessage(tab.id, {
-        type: 'chatgpt.bridge.sync',
-        limit: message.limit || 30
-      });
+      const response = await sendBridgeMessage(tab.id, { type: 'chatgpt.bridge.sync', limit: message.limit || 30 });
       if (!response?.ok) throw new Error(response?.error || 'chatgpt_sync_failed');
       return { tabId: tab.id, conversation: response.conversation || [] };
     }
@@ -155,12 +317,7 @@ async function handleChatGptMessage(message) {
     case 'chatgpt.send': {
       const tab = await resolveChatGptTab(message.tabId);
       if (!tab) throw new Error('chatgpt_tab_not_found');
-      const response = await sendBridgeMessage(tab.id, {
-        type: 'chatgpt.bridge.send',
-        text: message.text,
-        timeoutMs: message.timeoutMs || 180000
-      });
-      if (!response?.ok) throw new Error(response?.error || 'chatgpt_send_failed');
+      const response = await sendPromptThroughBridge(tab.id, message.text, { timeoutMs: message.timeoutMs || 180000 });
       return {
         tabId: tab.id,
         text: response.text || '',
@@ -174,9 +331,29 @@ async function handleChatGptMessage(message) {
   }
 }
 
+async function handleAgentMessage(message) {
+  switch (message.type) {
+    case 'agent.run':
+      return runAgentTask(message);
+    case 'agent.stop': {
+      for (const state of activeRuns.values()) state.cancelled = true;
+      await emitAgentEvent({ kind: 'stopped', message: 'Stopping agent…' });
+      return { stopped: true };
+    }
+    default:
+      throw new Error('unsupported_agent_message');
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!message || !String(message.type || '').startsWith('chatgpt.')) return;
-  handleChatGptMessage(message)
+  if (!message?.type || message.type === 'agent.event') return;
+
+  let handler = null;
+  if (String(message.type).startsWith('chatgpt.')) handler = handleChatGptMessage;
+  if (String(message.type).startsWith('agent.')) handler = handleAgentMessage;
+  if (!handler) return;
+
+  handler(message)
     .then((result) => sendResponse({ ok: true, result }))
     .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
   return true;
