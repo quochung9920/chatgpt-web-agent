@@ -206,7 +206,9 @@ app.use('/v1', (req, res) => {
     return res.status(401).json({ error: error.message === 'insufficient_scope' ? 'insufficient_scope' : 'invalid_token' });
   }
 
+  const originalUrl = req.originalUrl || req.url;
   req.headers.authorization = `Bearer ${INTERNAL_API_KEY}`;
+  req.url = originalUrl;
   proxy.web(req, res, { target: BACKEND_URL });
 });
 
