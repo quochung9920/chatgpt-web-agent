@@ -1,0 +1,134 @@
+openapi: 3.1.0
+info:
+  title: ChatGPT Web Agent API
+  version: 0.1.0
+  description: Secure control API for a user-owned Chrome session and WordPress site.
+servers:
+  - url: https://agent.example.com
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      security: []
+      operationId: health
+      summary: Check control server health
+      responses:
+        '200':
+          description: Healthy
+  /v1/browser/status:
+    get:
+      operationId: browserStatus
+      summary: Check whether the Chrome agent is connected
+      responses:
+        '200':
+          description: Browser agent status
+  /v1/browser/action:
+    post:
+      operationId: browserAction
+      summary: Execute one whitelisted browser action
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum:
+                    - tabs.list
+                    - tab.active
+                    - tab.navigate
+                    - tab.reload
+                    - page.read
+                    - page.click
+                    - page.type
+                    - page.scroll
+                    - page.screenshot
+                args:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Action result
+  /v1/wordpress/site:
+    get:
+      operationId: wordpressSite
+      summary: Read WordPress site information
+      responses:
+        '200':
+          description: Site details
+  /v1/wordpress/pages:
+    get:
+      operationId: wordpressPages
+      summary: List WordPress pages
+      parameters:
+        - in: query
+          name: search
+          schema: { type: string }
+        - in: query
+          name: per_page
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        '200':
+          description: Page list
+    post:
+      operationId: wordpressCreatePage
+      summary: Create a WordPress page
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PageWrite'
+      responses:
+        '201':
+          description: Page created
+  /v1/wordpress/pages/{id}:
+    get:
+      operationId: wordpressGetPage
+      summary: Get a WordPress page including raw block content
+      parameters:
+        - $ref: '#/components/parameters/PageId'
+      responses:
+        '200':
+          description: Page details
+    patch:
+      operationId: wordpressUpdatePage
+      summary: Update a WordPress page
+      parameters:
+        - $ref: '#/components/parameters/PageId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PageWrite'
+      responses:
+        '200':
+          description: Updated page
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    PageId:
+      in: path
+      name: id
+      required: true
+      schema: { type: integer }
+  schemas:
+    PageWrite:
+      type: object
+      properties:
+        title: { type: string }
+        slug: { type: string }
+        status:
+          type: string
+          enum: [draft, publish, pending, private]
+        content:
+          type: string
+          description: Gutenberg block markup or WordPress post content.
