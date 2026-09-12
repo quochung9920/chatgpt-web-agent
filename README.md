@@ -1,79 +1,79 @@
 # ChatGPT Web Agent
 
-A browser-first agent bridge that lets a normal ChatGPT Custom GPT operate the user's own Chrome session directly through OAuth — without an OpenAI API key and without platform-specific plugins.
+A browser-first agent bridge for controlling and inspecting the user's real Chrome session. Version 0.6 adds a Chrome Side Panel that can chat through an existing logged-in `chatgpt.com` tab, so the user can keep the website visible while chatting beside it.
 
-## Architecture
+No OpenAI API key is required for the browser-session chat mode.
 
-```text
-ChatGPT at chatgpt.com
-        |
-        | OAuth 2.0
-        v
-+-------------------------+
-| Web Agent OAuth Gateway |
-+------------+------------+
-             |
-             | private internal auth
-             v
-+-------------------------+
-| Browser Agent Backend   |
-+------------+------------+
-             |
-             | WebSocket
-             v
-+-------------------------+
-| Chrome Extension        |
-+------------+------------+
-             |
-             v
-      Real Chrome session
-             |
-   +---------+----------+
-   |         |          |
- Figma   WordPress   Shopify / any website
-```
-
-WordPress is **not** a special integration. If ChatGPT needs to edit WordPress, it opens `wp-admin` in Chrome and operates Gutenberg, Elementor, Media Library, settings, or other visible UI just like a human user.
-
-## Why browser-first
-
-The project is designed for tasks such as:
-
-> Open this exact Figma section, reproduce it on my website, then inspect the result in Chrome and keep fixing it until desktop and mobile match.
-
-The same agent can work with WordPress, Elementor, Figma, Shopify, Webflow, dashboards, and other web apps without installing a server plugin for every platform.
-
-## Interaction model
-
-The extension supports two complementary modes.
-
-### DOM / accessibility mode
-
-Prefer this when the website exposes useful semantic elements:
+## v0.6 architecture
 
 ```text
-page.read
-page.accessibility
-page.inspect
-page.elements
-selector-based click/type
+Windows Chrome
++--------------------------------------------------+
+| Website / Figma / WordPress / Shopify            |
+|                                      +---------+ |
+|                                      | Side    | |
+|                                      | Panel   | |
+|                                      | ChatGPT | |
+|                                      +----+----+ |
+|                                           |      |
+|                         logged-in ChatGPT tab    |
++-------------------------------------------+------+
+                                            |
+                                Chrome extension
+                                            |
+                                         WebSocket
+                                            |
+                                      WSL Web Agent
 ```
 
-### Visual / coordinate mode
+The ChatGPT session remains inside Chrome. The extension does not copy ChatGPT cookies or session tokens to WSL. It sends text to the selected logged-in ChatGPT tab and mirrors the visible conversation back into the extension side panel.
 
-Use this for canvas-heavy or custom interfaces such as Figma and some visual editors:
+This browser-session bridge is based on the ChatGPT web UI and is therefore less stable than an official API/integration; selectors may need updates when the ChatGPT website changes.
+
+## Two ChatGPT connection modes
+
+### 1. Side Panel chat mode
+
+Use the existing ChatGPT login in the same Chrome profile:
 
 ```text
-page.screenshot
-page.elementAt
-page.click       x/y
-page.hover       x/y
-page.drag        x/y -> x/y
-page.doubleClick
-page.rightClick
+Side Panel
+  -> selected chatgpt.com tab
+  -> ChatGPT web session
+  -> answer returned to Side Panel
 ```
 
-The agent should inspect or screenshot before using uncertain coordinates.
+This is the mode for users who want to chat directly inside the extension while keeping the target website open.
+
+### 2. Custom GPT + OAuth mode
+
+The repository still contains `chatgpt-action/` and the OAuth gateway for users who want a Custom GPT Action connected to the Web Agent server.
+
+```text
+Custom GPT
+   -> OAuth
+   -> Web Agent gateway
+   -> browser backend
+   -> Chrome extension
+```
+
+## Browser-first architecture
+
+WordPress is not a special integration. The agent can operate WordPress, Elementor, Figma, Shopify, Webflow, dashboards, and other websites through the real Chrome UI.
+
+```text
+Web Agent backend
+       |
+       | WebSocket
+       v
+Chrome Extension
+       |
+       +-> DOM / accessibility
+       +-> visual / coordinates
+       +-> keyboard / click / drag
+       +-> screenshots
+       +-> console / network
+```
 
 ## Browser capabilities
 
@@ -118,66 +118,42 @@ debug.clear
 debug.stop
 ```
 
-`page.upload` can place file data supplied by the current task into an HTML file input. It does not grant arbitrary filesystem access.
-
-## Design verification loop
-
-The server keeps optional implementation targets and visual verification state:
+## Chrome extension structure
 
 ```text
-reference
-   -> inspect destination
-   -> operate website UI
-   -> screenshot
-   -> DOM/style/error inspection
-   -> compare
-   -> repair
-   -> repeat desktop/tablet/mobile
+chrome-extension/
+├── manifest.json
+├── service-worker.js
+├── background.js
+├── chatgpt-content.js
+├── sidepanel.html
+├── sidepanel.css
+├── sidepanel.js
+├── options.html
+└── options.js
 ```
 
-A target only becomes `complete` when every configured viewport passes.
-
-## Repository structure
-
-```text
-chatgpt-web-agent/
-├── chrome-extension/
-│   ├── manifest.json
-│   ├── background.js
-│   ├── options.html
-│   └── options.js
-├── server/
-│   ├── .env.example
-│   ├── package.json
-│   └── src/
-│       ├── browser-backend.js
-│       ├── oauth.js
-│       ├── oauth-gateway.js
-│       └── target-store.js
-├── chatgpt-action/
-│   ├── openapi.yaml
-│   └── instructions.md
-├── docs/
-│   └── SETUP.md
-└── openapi.yaml
-```
-
-There is intentionally no WordPress plugin in the architecture.
+`chatgpt-content.js` is injected only into the selected ChatGPT tab when the Side Panel needs to communicate with the logged-in ChatGPT web session.
 
 ## Quick start
 
-### 1. Server
+### 1. Run the server in WSL
 
 ```bash
-cd server
-cp .env.example .env
+cd ~/projects/chatgpt-web-agent/server
 npm install
 npm start
 ```
 
-Configure OAuth and Chrome agent secrets in `.env`. These are credentials for your own Web Agent service; they are not OpenAI API keys.
+For local Windows Chrome usage:
 
-### 2. Chrome extension
+```text
+Server URL: ws://localhost:8787
+Agent ID: desktop-chrome
+Agent Token: same AGENT_TOKEN as server/.env
+```
+
+### 2. Load the extension
 
 Open:
 
@@ -187,78 +163,66 @@ chrome://extensions
 
 Enable Developer Mode, choose **Load unpacked**, and select `chrome-extension/`.
 
-In the extension Options page configure:
+Click the extension icon to open the Side Panel.
+
+### 3. Chat inside the extension
+
+Make sure at least one `https://chatgpt.com/` tab is logged in in the same Chrome profile.
+
+The Side Panel will:
+
+1. discover ChatGPT tabs;
+2. let you select one;
+3. sync its visible conversation;
+4. send prompts from the Side Panel;
+5. wait for ChatGPT's response;
+6. show the response in the Side Panel.
+
+You can create a new ChatGPT tab from the Side Panel without leaving the current website.
+
+## Design verification loop
+
+The Web Agent backend still provides optional target and visual verification primitives:
 
 ```text
-Server URL: wss://agent.your-domain.com
-Agent ID: desktop-chrome
-Agent Token: same AGENT_TOKEN as the server
+reference
+ -> inspect destination
+ -> operate website UI
+ -> screenshot
+ -> DOM/style/error inspection
+ -> compare
+ -> repair
+ -> repeat desktop/tablet/mobile
 ```
-
-For local development, use `ws://localhost:8787`.
-
-The extension requests Chrome's `debugger` permission for CDP input, viewport emulation, accessibility inspection, screenshots, console capture, and network diagnostics.
-
-### 3. Custom GPT
-
-Create a Custom GPT in ChatGPT and:
-
-- paste `chatgpt-action/instructions.md` into its Instructions;
-- import `chatgpt-action/openapi.yaml` as its Action schema;
-- replace `https://agent.example.com` with your public HTTPS Web Agent URL;
-- configure Action authentication as OAuth using `/oauth/authorize` and `/oauth/token`;
-- copy the callback URL shown by the GPT builder into `OAUTH_ALLOWED_REDIRECT_URIS`.
-
-The user remains logged in to ChatGPT normally at chatgpt.com. No OpenAI API key is used by this project.
-
-See [`docs/SETUP.md`](docs/SETUP.md) for full setup.
-
-## Example workflow
-
-User:
-
-```text
-Open this Figma node and recreate the hero on my WordPress homepage.
-Use Elementor if that page is using Elementor. Check desktop and mobile yourself.
-```
-
-Agent flow:
-
-```text
-open/switch Figma tab
--> inspect exact node
--> capture reference
--> open wp-admin tab
--> navigate through WordPress/Elementor UI
--> build section
--> open frontend tab
--> screenshot + inspect
--> compare
--> return to editor and repair
--> repeat until required viewports pass
-```
-
-No WordPress-specific REST bridge is involved.
 
 ## Security model
 
 ```text
-ChatGPT Custom GPT -- OAuth --> Web Agent Gateway
-Web Agent Gateway -- private internal key --> Browser Backend
-Browser Backend -- AGENT_TOKEN/WebSocket --> Chrome Extension
-Chrome Extension --> user-approved Chrome session
+ChatGPT login/session  -> stays in Chrome
+Side Panel             -> exchanges visible chat text with ChatGPT tab
+Chrome Extension       -> controls browser through allowlisted actions
+Browser Backend        -> receives AGENT_TOKEN/WebSocket connection
 ```
 
 Safeguards:
 
+- ChatGPT cookies/session tokens are not exported to WSL;
 - browser actions are explicitly allowlisted;
 - arbitrary remote JavaScript execution is not exposed;
-- OAuth is separate from the user's ChatGPT password;
-- Chrome/website passwords are not sent to ChatGPT by this project;
-- file upload accepts supplied task data only and does not expose the local filesystem;
-- destructive external actions should only be taken when explicitly requested;
-- HTTPS/WSS should be used in production.
+- file upload accepts supplied task data only and does not expose arbitrary local files;
+- destructive actions should only be taken when explicitly requested;
+- HTTPS/WSS should be used for remote deployments.
+
+## Custom GPT OAuth mode
+
+For the optional OAuth flow, see:
+
+```text
+chatgpt-action/openapi.yaml
+chatgpt-action/instructions.md
+docs/SETUP.md
+```
 
 ## Version
 
-`0.4.0` — browser-agent architecture. Platform-specific WordPress integration was removed from the main project.
+`0.6.0` — Chrome Side Panel ChatGPT web-session bridge plus browser-agent architecture.
