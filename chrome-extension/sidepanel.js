@@ -211,7 +211,7 @@ function populateChatGptTabs(tabs, selectedId) {
   if (!tabs?.length) {
     const option = document.createElement('option');
     option.value = '';
-    option.textContent = 'No ChatGPT tab';
+    option.textContent = 'Starting dedicated ChatGPT…';
     tabSelect.append(option);
     tabSelect.disabled = true;
     return;
@@ -234,13 +234,17 @@ async function refreshChatGptState({ syncConversation = true } = {}) {
   chatgptBadge.textContent = 'ChatGPT';
 
   try {
-    const state = await runtimeRequest('chatgpt.status', { tabId: selectedChatGptTabId });
+    // Do not trust a stale local tab id after switching Agent groups. Runtime
+    // control resolves the ChatGPT tab bound to the currently active group.
+    const state = await runtimeRequest('chatgpt.status', {
+      includeConversation: syncConversation
+    });
     populateChatGptTabs(state.tabs || [], state.selectedTabId);
     selectedChatGptTabId = state.selectedTabId || null;
 
     if (!state.open) {
       chatgptDot.className = 'status-dot offline';
-      chatgptBadge.textContent = 'ChatGPT closed';
+      chatgptBadge.textContent = 'Starting ChatGPT…';
       updateComposerState(false);
       if (!sending) renderConversation([], true);
       return state;
@@ -248,12 +252,18 @@ async function refreshChatGptState({ syncConversation = true } = {}) {
 
     if (!state.bridgeReady) {
       chatgptDot.className = 'status-dot offline';
-      chatgptBadge.textContent = 'ChatGPT not ready';
+      if (state.error === 'chatgpt_sign_in_required') {
+        chatgptBadge.textContent = 'Sign in required';
+        setError('A dedicated ChatGPT tab was created. Open it and sign in once.');
+      } else {
+        chatgptBadge.textContent = 'ChatGPT not ready';
+        if (state.error) setError(`ChatGPT bridge: ${state.error}`);
+      }
       updateComposerState(false);
-      if (state.error) setError(`ChatGPT bridge: ${state.error}`);
       return state;
     }
 
+    setError('');
     chatgptDot.className = 'status-dot online';
     chatgptBadge.textContent = 'ChatGPT ready';
     if (!sending) updateComposerState(true);
@@ -298,6 +308,17 @@ async function runHybridTask() {
   scrollChatToBottom();
 
   try {
+    // Resolve the dedicated reasoning tab immediately before every run. This
+    // prevents a newly-switched group from accidentally using the prior group's chat.
+    const chatState = await runtimeRequest('chatgpt.status', { includeConversation: false });
+    if (!chatState?.selectedTabId) throw new Error('chatgpt_tab_not_found');
+    if (!chatState.bridgeReady) {
+      throw new Error(chatState.error === 'chatgpt_sign_in_required'
+        ? 'Sign in to the dedicated ChatGPT tab first.'
+        : (chatState.error || 'chatgpt_bridge_unavailable'));
+    }
+    selectedChatGptTabId = chatState.selectedTabId;
+
     const result = await runtimeRequest('hybrid.run', {
       tabId: selectedChatGptTabId,
       task: text
