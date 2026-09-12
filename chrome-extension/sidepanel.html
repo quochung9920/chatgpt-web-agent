@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChatGPT Web Agent</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <main class="panel-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">A</div>
+        <div>
+          <div class="brand-title">ChatGPT Web Agent</div>
+          <div class="brand-subtitle">Chrome browser agent</div>
+        </div>
+      </div>
+      <button id="settings" class="icon-button" title="Settings" aria-label="Settings">⚙</button>
+    </header>
+
+    <section class="status-card">
+      <div class="status-row">
+        <span id="statusDot" class="status-dot checking"></span>
+        <div>
+          <div id="statusText" class="status-title">Checking server…</div>
+          <div id="statusDetail" class="muted">Waiting for connection status</div>
+        </div>
+      </div>
+      <div class="actions compact-actions">
+        <button id="refresh" class="secondary">Refresh</button>
+        <button id="reconnect" class="secondary">Reconnect</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-label">Current tab</div>
+      <div class="tab-card">
+        <div id="tabTitle" class="tab-title">Loading…</div>
+        <div id="tabUrl" class="tab-url">—</div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div class="section-label">ChatGPT session</div>
+        <span id="chatgptBadge" class="badge">Checking</span>
+      </div>
+      <div class="session-card">
+        <p id="chatgptText" class="muted">Looking for an existing chatgpt.com tab in this Chrome profile.</p>
+        <button id="openChatgpt" class="primary">Open ChatGPT</button>
+      </div>
+    </section>
+
+    <section class="section grow">
+      <div class="section-label">Agent capabilities</div>
+      <div class="capabilities">
+        <span>DOM</span><span>Accessibility</span><span>Vision</span><span>Click</span><span>Type</span><span>Drag</span><span>Upload</span><span>Screenshot</span><span>Console</span><span>Network</span>
+      </div>
+      <div class="activity-card">
+        <div class="activity-title">Ready for browser tasks</div>
+        <div class="muted">This panel stays beside the page while the agent works, similar to a browser assistant sidebar.</div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span id="agentId">desktop-chrome</span>
+      <span>v0.5.0</span>
+    </footer>
+  </main>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
