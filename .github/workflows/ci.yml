@@ -28,6 +28,7 @@ jobs:
           node --check chrome-extension/service-worker.js
           node --check chrome-extension/service-worker-entry.js
           node --check chrome-extension/sidepanel-scope.js
+          node --check chrome-extension/stream-model-bridge.js
           node --check chrome-extension/local-browser-tools.js
           node --check chrome-extension/tab-group-session.js
           node --check chrome-extension/group-scoped-tools.js
@@ -36,5 +37,7 @@ jobs:
           node --check chrome-extension/group-ui.js
           node --check chrome-extension/permission-ui.js
           node --check chrome-extension/chatgpt-content.js
+          node --check chrome-extension/chatgpt-live-bridge.js
           node --check chrome-extension/options.js
           node --check chrome-extension/sidepanel.js
+          node --check chrome-extension/stream-model-ui.js
