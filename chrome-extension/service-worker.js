@@ -1,5 +1,6 @@
 import './background.js';
-import { executeLocalBrowserTool, isLocalAgentTool, LOCAL_AGENT_TOOLS } from './local-browser-tools.js';
+import { executeLocalBrowserTool, isLocalAgentTool, LOCAL_AGENT_TOOLS } from './group-scoped-tools.js';
+import { activateAgentGroupForTab, ensureAgentGroup, getAgentGroupStatus } from './tab-group-session.js';
 
 const MAX_AGENT_STEPS = 24;
 const activeRuns = new Map();
@@ -155,12 +156,12 @@ function describeTools() {
   return `Available browser tools:\n${LOCAL_AGENT_TOOLS.map((tool) => `- ${tool}`).join('\n')}\n\nImportant argument patterns:\n- tabs.switch/tabs.close: {"tabId": number}\n- tab.navigate: {"tabId": number, "url": "https://..."}\n- page.read/page.accessibility/page.screenshot: {"tabId": number}\n- page.inspect/page.type: {"tabId": number, "selector": "CSS", ...}\n- page.click: {"tabId": number, "selector": "CSS"} OR {"tabId": number, "x": number, "y": number}\n- page.drag: {"tabId": number, "fromX": number, "fromY": number, "toX": number, "toY": number}\n- page.viewport.set: {"tabId": number, "width": number, "height": number, "mobile": boolean}`;
 }
 
-function buildInitialAgentPrompt(task, tabs, activeTabId) {
-  return `[WEB_AGENT_SYSTEM]\nYou are now operating the user's REAL Chrome browser through the ChatGPT Web Agent extension. You are not merely giving instructions. You can inspect tabs and directly perform browser actions.\n\nDo NOT ask the user to paste a URL, send a screenshot, or manually describe a page when the browser tools can inspect it. Do NOT claim an action succeeded until a tool result confirms it. Prefer DOM/accessibility inspection first; use screenshots when visual understanding is needed.\n\nCURRENT BROWSER STATE\nActive tab id: ${activeTabId ?? 'unknown'}\nTabs:\n${safeJson(tabs, 12000)}\n\n${describeTools()}\n\nTOOL PROTOCOL\nWhen you need exactly one browser action, your response MUST end with exactly one block:\n<web_agent>\n{"type":"tool_call","tool":"page.read","args":{"tabId":123}}\n</web_agent>\n\nAfter the extension executes it, you will receive [WEB_AGENT_TOOL_RESULT]. Then decide the next action. Continue until the user's task is actually complete.\n\nWhen finished, end with:\n<web_agent>\n{"type":"final","message":"Concise completion summary"}\n</web_agent>\n\nIf an action fails, inspect the error/result and try a safer alternative instead of immediately asking the user. Keep each turn to ONE tool call.\n\nUSER TASK\n${String(task || '').trim()}`;
+function buildInitialAgentPrompt(task, tabs, activeTabId, group) {
+  return `[WEB_AGENT_SYSTEM]\nYou are now operating the user's REAL Chrome browser through the ChatGPT Web Agent extension. You are not merely giving instructions. You can inspect tabs and directly perform browser actions.\n\nBROWSER SCOPE\nYou are sandboxed to ONE Chrome Tab Group named "${group?.title || 'ChatGPT Agent'}" (group id ${group?.groupId ?? 'unknown'}). The Tabs list below contains ONLY websites inside that group. You must never attempt to inspect or operate tabs outside this group. Any website you open with tabs.open is automatically placed inside this same group. The ChatGPT reasoning tab is deliberately outside the group and is not a browser work target.\n\nDo NOT ask the user to paste a URL, send a screenshot, or manually describe a page when the browser tools can inspect it. Do NOT claim an action succeeded until a tool result confirms it. Prefer DOM/accessibility inspection first; use screenshots when visual understanding is needed.\n\nCURRENT GROUP STATE\nWorking tab id: ${activeTabId ?? 'unknown'}\nGroup tabs:\n${safeJson(tabs, 12000)}\n\n${describeTools()}\n\nTOOL PROTOCOL\nWhen you need exactly one browser action, your response MUST end with exactly one block:\n<web_agent>\n{"type":"tool_call","tool":"page.read","args":{"tabId":123}}\n</web_agent>\n\nAfter the extension executes it, you will receive [WEB_AGENT_TOOL_RESULT]. Then decide the next action. Continue until the user's task is actually complete.\n\nWhen finished, end with:\n<web_agent>\n{"type":"final","message":"Concise completion summary"}\n</web_agent>\n\nIf an action fails, inspect the error/result and try a safer alternative instead of immediately asking the user. Keep each turn to ONE tool call.\n\nUSER TASK\n${String(task || '').trim()}`;
 }
 
 function buildToolResultPrompt(step, tool, args, result, error = null) {
-  return `[WEB_AGENT_TOOL_RESULT]\nStep: ${step}\nTool: ${tool}\nArgs: ${safeJson(args, 5000)}\nStatus: ${error ? 'ERROR' : 'OK'}\nResult:\n${safeJson(error ? { error } : result, 16000)}\n\nContinue the browser task. Use one <web_agent> tool call, or return a final block only when the task is genuinely complete.`;
+  return `[WEB_AGENT_TOOL_RESULT]\nStep: ${step}\nTool: ${tool}\nArgs: ${safeJson(args, 5000)}\nStatus: ${error ? 'ERROR' : 'OK'}\nResult:\n${safeJson(error ? { error } : result, 16000)}\n\nContinue the browser task. Stay inside the active ChatGPT Agent tab group. Use one <web_agent> tool call, or return a final block only when the task is genuinely complete.`;
 }
 
 async function emitAgentEvent(event) {
@@ -169,9 +170,8 @@ async function emitAgentEvent(event) {
   } catch {}
 }
 
-function pickWorkingTab(tabs, chatgptTabId) {
-  const candidates = tabs.filter((tab) => tab.id !== chatgptTabId && /^https?:\/\//i.test(tab.url || ''));
-  return candidates.find((tab) => tab.active) || candidates[0] || null;
+function pickWorkingTab(tabs) {
+  return tabs.find((tab) => tab.active) || tabs[0] || null;
 }
 
 function withDefaultTabId(tool, args, workingTabId) {
@@ -201,19 +201,20 @@ async function runAgentTask(message) {
   if (!chatTab) throw new Error('chatgpt_tab_not_found');
   await ensureChatGptBridge(chatTab.id);
 
+  const group = await ensureAgentGroup(message.seedTabId ?? null, { forceNewIfOutside: false });
   const runId = crypto.randomUUID();
-  const state = { cancelled: false, chatgptTabId: chatTab.id, workingTabId: null };
+  const state = { cancelled: false, chatgptTabId: chatTab.id, workingTabId: group.workingTabId || null };
   activeRuns.set(runId, state);
 
   try {
     const tabs = await executeLocalBrowserTool('tabs.list', {});
-    const working = pickWorkingTab(tabs, chatTab.id);
-    state.workingTabId = working?.id || null;
+    const working = pickWorkingTab(tabs);
+    state.workingTabId = working?.id || state.workingTabId;
 
-    await emitAgentEvent({ runId, kind: 'start', message: 'Agent connected to Chrome', workingTabId: state.workingTabId });
-    await emitAgentEvent({ runId, kind: 'observe', message: `Found ${tabs.length} browser tabs` });
+    await emitAgentEvent({ runId, kind: 'start', message: `Agent locked to group: ${group.title}`, workingTabId: state.workingTabId, groupId: group.groupId });
+    await emitAgentEvent({ runId, kind: 'observe', message: `Found ${tabs.length} website tab${tabs.length === 1 ? '' : 's'} in the agent group` });
 
-    let assistant = await sendPromptThroughBridge(chatTab.id, buildInitialAgentPrompt(task, tabs, state.workingTabId));
+    let assistant = await sendPromptThroughBridge(chatTab.id, buildInitialAgentPrompt(task, tabs, state.workingTabId, group));
     let lastText = assistant.text || '';
 
     for (let step = 1; step <= MAX_AGENT_STEPS; step += 1) {
@@ -225,13 +226,13 @@ async function runAgentTask(message) {
 
       if (!directive) {
         await emitAgentEvent({ runId, kind: 'final', message: visibleText || 'ChatGPT finished without requesting another browser action.' });
-        return { runId, tabId: chatTab.id, text: visibleText || lastText, steps: step - 1 };
+        return { runId, tabId: chatTab.id, text: visibleText || lastText, steps: step - 1, groupId: group.groupId };
       }
 
       if (directive.type === 'final') {
         const finalText = String(directive.message || visibleText || 'Task complete.').trim();
         await emitAgentEvent({ runId, kind: 'final', message: finalText });
-        return { runId, tabId: chatTab.id, text: finalText, steps: step - 1 };
+        return { runId, tabId: chatTab.id, text: finalText, steps: step - 1, groupId: group.groupId };
       }
 
       const tool = String(directive.tool || '');
@@ -333,6 +334,12 @@ async function handleChatGptMessage(message) {
 
 async function handleAgentMessage(message) {
   switch (message.type) {
+    case 'agent.group.ensure':
+      return ensureAgentGroup(message.seedTabId ?? null, { forceNewIfOutside: Boolean(message.forceNewIfOutside) });
+    case 'agent.group.status':
+      return getAgentGroupStatus();
+    case 'agent.group.new':
+      return activateAgentGroupForTab(message.seedTabId, { forceNewIfOutside: true });
     case 'agent.run':
       return runAgentTask(message);
     case 'agent.stop': {
