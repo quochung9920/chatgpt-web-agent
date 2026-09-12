@@ -25,12 +25,14 @@ async function writeAll(targets) {
 }
 
 function queueWrite(mutator) {
-  writeQueue = writeQueue.then(async () => {
-    const targets = await readAll();
-    const result = await mutator(targets);
-    await writeAll(targets);
-    return result;
-  });
+  writeQueue = writeQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const targets = await readAll();
+      const result = await mutator(targets);
+      await writeAll(targets);
+      return result;
+    });
   return writeQueue;
 }
 
@@ -38,7 +40,7 @@ function normalizeViewports(viewports) {
   const input = Array.isArray(viewports) && viewports.length ? viewports : [
     { label: 'desktop', width: 1440, height: 900 },
     { label: 'tablet', width: 768, height: 1024 },
-    { label: 'mobile', width: 390, height: 844 }
+    { label: 'mobile', width: 390, height: 844, mobile: true }
   ];
 
   return input.slice(0, 8).map((item, index) => ({
@@ -62,7 +64,8 @@ export async function createTarget(input = {}) {
     notes: String(input.notes || '').slice(0, 10000),
     createdAt: now,
     updatedAt: now,
-    lastObservation: null
+    lastObservation: null,
+    verificationResults: {}
   };
 
   await queueWrite(async (targets) => {
@@ -83,13 +86,35 @@ export async function updateTarget(id, patch = {}) {
     if (!current) return null;
 
     const allowedStatus = new Set(['draft', 'building', 'verifying', 'repairing', 'complete', 'blocked']);
+    let resetVerification = false;
+
     if (patch.name !== undefined) current.name = String(patch.name).slice(0, 160);
-    if (patch.source && typeof patch.source === 'object') current.source = patch.source;
-    if (patch.destination && typeof patch.destination === 'object') current.destination = patch.destination;
-    if (patch.viewports !== undefined) current.viewports = normalizeViewports(patch.viewports);
+    if (patch.source && typeof patch.source === 'object') {
+      current.source = patch.source;
+      resetVerification = true;
+    }
+    if (patch.destination && typeof patch.destination === 'object') {
+      current.destination = patch.destination;
+      resetVerification = true;
+    }
+    if (patch.viewports !== undefined) {
+      current.viewports = normalizeViewports(patch.viewports);
+      resetVerification = true;
+    }
     if (patch.notes !== undefined) current.notes = String(patch.notes).slice(0, 10000);
     if (patch.status !== undefined && allowedStatus.has(patch.status)) current.status = patch.status;
     if (patch.lastObservation !== undefined) current.lastObservation = patch.lastObservation;
+    if (patch.verificationResults && typeof patch.verificationResults === 'object') {
+      current.verificationResults = patch.verificationResults;
+    } else if (resetVerification) {
+      current.verificationResults = {};
+      current.lastObservation = null;
+    }
+
+    if (!current.verificationResults || typeof current.verificationResults !== 'object') {
+      current.verificationResults = {};
+    }
+
     current.updatedAt = new Date().toISOString();
     targets[id] = current;
     return current;
