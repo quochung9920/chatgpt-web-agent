@@ -153,6 +153,57 @@
     }));
   }
 
+  function dataUrlToFile(dataUrl, filename) {
+    const match = String(dataUrl || '').match(/^data:([^;,]+)?;base64,(.+)$/s);
+    if (!match) throw new Error('invalid_image_data_url');
+    const binary = atob(match[2]);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return new File([bytes], filename, { type: match[1] || 'image/png' });
+  }
+
+  function findFileInput() {
+    const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+    return inputs.find((input) => !input.disabled) || null;
+  }
+
+  async function revealFileInput() {
+    let input = findFileInput();
+    if (input) return input;
+
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const attach = buttons.find((button) => {
+      const label = `${button.getAttribute('aria-label') || ''} ${button.title || ''} ${button.innerText || ''}`.toLowerCase();
+      return /attach|upload|add photos|add files|file/.test(label) && isVisible(button);
+    });
+
+    if (attach) {
+      attach.click();
+      for (let i = 0; i < 20; i += 1) {
+        await sleep(100);
+        input = findFileInput();
+        if (input) return input;
+      }
+    }
+    return null;
+  }
+
+  async function attachImage(dataUrl, filename = 'web-agent-screenshot.png') {
+    if (!dataUrl) return { attached: false };
+    const input = await revealFileInput();
+    if (!input) throw new Error('chatgpt_file_input_not_found');
+
+    const file = dataUrlToFile(dataUrl, filename);
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+
+    await sleep(900);
+    return { attached: true, name: file.name, size: file.size, type: file.type };
+  }
+
   async function waitForAssistantResponse(before, timeoutMs = 180000) {
     const deadline = Date.now() + Math.min(Math.max(Number(timeoutMs || 180000), 15000), 300000);
     let stableText = '';
@@ -184,7 +235,7 @@
     throw new Error('chatgpt_response_timeout');
   }
 
-  async function sendPrompt(text, timeoutMs) {
+  async function sendPrompt(text, timeoutMs, imageDataUrl = '') {
     const prompt = String(text || '').trim();
     if (!prompt) throw new Error('empty_prompt');
 
@@ -194,10 +245,21 @@
       lastText: cleanMessageText(assistants.at(-1))
     };
 
+    let attachment = { attached: false };
+    let attachmentError = '';
+    if (imageDataUrl) {
+      try {
+        attachment = await attachImage(imageDataUrl);
+      } catch (error) {
+        attachmentError = error?.message || String(error);
+      }
+    }
+
     const composer = await setComposerText(prompt);
-    await sleep(120);
+    await sleep(150);
     await submitComposer(composer);
-    return waitForAssistantResponse(before, timeoutMs);
+    const response = await waitForAssistantResponse(before, timeoutMs);
+    return { ...response, attachment, attachmentError };
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -216,7 +278,10 @@
         case 'chatgpt.bridge.sync':
           return { ok: true, conversation: getConversation(message.limit || 30) };
         case 'chatgpt.bridge.send':
-          return { ok: true, ...(await sendPrompt(message.text, message.timeoutMs)) };
+          return {
+            ok: true,
+            ...(await sendPrompt(message.text, message.timeoutMs, message.imageDataUrl || ''))
+          };
         default:
           throw new Error('unsupported_bridge_message');
       }
