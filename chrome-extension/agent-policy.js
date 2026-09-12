@@ -20,8 +20,8 @@ const READ_ONLY_TOOLS = new Set([
 ]);
 
 const HIGH_RISK_TOOLS = new Set(['tabs.close']);
-const HIGH_RISK_PATTERN = /\b(delete|remove|erase|destroy|publish|send|submit|pay|payment|purchase|buy|checkout|place\s+order|confirm\s+order|transfer|wire|withdraw|deposit|password|passcode|sign\s*out|log\s*out|logout|disconnect|revoke|cancel\s+(?:plan|subscription|account)|close\s+account|delete\s+account)\b/i;
-const MEDIUM_RISK_PATTERN = /\b(save|update|apply|confirm|continue|next|install|enable|disable|connect|authorize|grant|upload)\b/i;
+const HIGH_RISK_PATTERN = /\b(delete|remove|erase|destroy|publish|send|submit|pay|payment|purchase|buy|checkout|place\s+order|confirm\s+order|transfer|wire|withdraw|deposit|password|passcode|sign\s*out|log\s*out|logout|disconnect|revoke|cancel\s+(?:plan|subscription|account)|close\s+account|delete\s+account|factory\s+reset|wipe)\b/i;
+const MEDIUM_RISK_PATTERN = /\b(save|update|apply|confirm|continue|next|install|enable|disable|connect|authorize|grant|upload|select|check|choose)\b/i;
 
 function flattenSignals(value, output = []) {
   if (value == null) return output;
@@ -96,7 +96,7 @@ export function decideAgentPermission(mode, classification) {
 
 export function isMutatingTool(tool) {
   const name = String(tool || '');
-  return !isReadOnlyTool(name) && name !== 'tabs.switch' && name !== 'page.scroll' && name !== 'page.hover';
+  return !isReadOnlyTool(name) && name !== 'tabs.switch' && name !== 'page.scroll' && name !== 'page.hover' && name !== 'page.focus';
 }
 
 export function shouldObserveAfter(tool) {
@@ -104,7 +104,8 @@ export function shouldObserveAfter(tool) {
     'tabs.open', 'tabs.switch', 'tabs.close',
     'tab.navigate', 'tab.reload', 'tab.back', 'tab.forward',
     'page.click', 'page.clickText', 'page.doubleClick', 'page.rightClick',
-    'page.type', 'page.typeByLabel', 'page.key', 'page.scroll', 'page.drag',
+    'page.type', 'page.typeByLabel', 'page.key', 'page.hotkey', 'page.scroll', 'page.drag',
+    'page.focus', 'page.selectOption', 'page.check', 'page.upload',
     'page.viewport.set', 'page.viewport.clear'
   ]).has(String(tool || ''));
 }
@@ -114,7 +115,8 @@ export function shouldCaptureVisualAfter(tool) {
     'tabs.open', 'tabs.switch',
     'tab.navigate', 'tab.reload', 'tab.back', 'tab.forward',
     'page.click', 'page.clickText', 'page.doubleClick',
-    'page.type', 'page.typeByLabel', 'page.key', 'page.scroll', 'page.drag',
+    'page.type', 'page.typeByLabel', 'page.key', 'page.hotkey', 'page.scroll', 'page.drag',
+    'page.selectOption', 'page.check', 'page.upload',
     'page.viewport.set', 'page.viewport.clear'
   ]).has(String(tool || ''));
 }
