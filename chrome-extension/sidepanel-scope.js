@@ -17,6 +17,13 @@ function isEligibleWebsiteTab(tab) {
   return Boolean(tab?.id && /^https?:\/\//i.test(String(tab.url || '')) && !isChatGptUrl(tab.url));
 }
 
+async function configureScopedBehavior() {
+  try {
+    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
+  } catch {}
+  await syncSidePanelVisibility().catch(() => {});
+}
+
 async function setTabPanelState(tab, enabled) {
   try {
     if (enabled) {
@@ -120,9 +127,7 @@ export async function installTabScopedSidePanel() {
   if (installed) return;
   installed = true;
 
-  try {
-    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
-  } catch {}
+  await configureScopedBehavior();
 
   chrome.action.onClicked.addListener((tab) => {
     handleActionClick(tab).catch((error) => console.error('Failed to open scoped side panel:', error));
@@ -143,5 +148,6 @@ export async function installTabScopedSidePanel() {
     if (changes.agentGroupId || changes.agentGroupWindowId || changes.agentWorkingTabId) scheduleSync(0);
   });
 
-  await syncSidePanelVisibility();
+  chrome.runtime.onInstalled.addListener(() => configureScopedBehavior());
+  chrome.runtime.onStartup.addListener(() => configureScopedBehavior());
 }
