@@ -6,6 +6,7 @@ import {
 import { AGENT_MODES, normalizeAgentMode } from './agent-policy.js';
 
 const GROUP_CHAT_BINDINGS_KEY = 'agentGroupChatBindings';
+const groupChatCreationLocks = new Map();
 let installed = false;
 
 function isChatGptUrl(url) {
@@ -191,12 +192,33 @@ async function createChatGptTab(active = false, windowId = null) {
   return chrome.tabs.get(tab.id);
 }
 
+async function createAndBindChatForGroup(groupId, { active = false, windowId = null } = {}) {
+  const key = String(groupId);
+  if (groupChatCreationLocks.has(key)) return groupChatCreationLocks.get(key);
+
+  const creation = (async () => {
+    const tab = await createChatGptTab(active, windowId);
+    await saveGroupChatBinding(groupId, tab.id);
+    return chatGptStatus(tab.id, { allowAny: false });
+  })();
+
+  groupChatCreationLocks.set(key, creation);
+  try {
+    return await creation;
+  } finally {
+    if (groupChatCreationLocks.get(key) === creation) groupChatCreationLocks.delete(key);
+  }
+}
+
 export async function ensureChatGptForGroup(groupId, {
   forceNew = false,
   active = false,
   windowId = null
 } = {}) {
   if (groupId == null) throw new Error('agent_group_id_required');
+
+  const key = String(groupId);
+  if (groupChatCreationLocks.has(key)) return groupChatCreationLocks.get(key);
 
   if (!forceNew) {
     const bound = await getBoundChatGptTab(groupId);
@@ -206,9 +228,7 @@ export async function ensureChatGptForGroup(groupId, {
     }
   }
 
-  const tab = await createChatGptTab(active, windowId);
-  await saveGroupChatBinding(groupId, tab.id);
-  return chatGptStatus(tab.id, { allowAny: false });
+  return createAndBindChatForGroup(groupId, { active, windowId });
 }
 
 async function statusForCurrentGroup(preferredTabId = null, includeConversation = true) {
@@ -230,10 +250,14 @@ async function statusForCurrentGroup(preferredTabId = null, includeConversation 
 
 async function createChatForCurrentGroup(active = false) {
   const group = await getAgentGroupStatus().catch(() => null);
-  const tab = await createChatGptTab(active, group?.windowId ?? null);
   if (group?.active && group.groupId != null) {
-    await saveGroupChatBinding(group.groupId, tab.id);
+    return createAndBindChatForGroup(group.groupId, {
+      active,
+      windowId: group.windowId
+    });
   }
+
+  const tab = await createChatGptTab(active, null);
   return chatGptStatus(tab.id, { allowAny: false });
 }
 
