@@ -2,14 +2,12 @@ import {
   activateAgentGroupForTab,
   getAgentGroupStatus
 } from './tab-group-session.js';
-import { ensureChatGptForGroup } from './runtime-control.js';
 
 const PANEL_PATH = 'sidepanel.html';
 const ACTIVE_RUN_STATUSES = new Set(['running', 'awaiting_approval']);
 
 let syncTimer = null;
 let installed = false;
-const pendingUserGestureTabs = new Set();
 
 function isChatGptUrl(url) {
   return /^https:\/\/(chatgpt\.com|chat\.openai\.com)\//i.test(String(url || ''));
@@ -29,6 +27,9 @@ function groupTabIds(status) {
 
 async function disableGlobalPanelDefault() {
   try {
+    // The manifest declares a default_path so Chrome recognizes the extension as a
+    // side-panel extension. Override that global default at runtime. Only explicit
+    // tab-specific options for the current ChatGPT Agent group are enabled below.
     await chrome.sidePanel.setOptions({ enabled: false });
   } catch {}
 }
@@ -55,7 +56,7 @@ async function configureScopedBehavior() {
   await syncSidePanelVisibility().catch(() => {});
 }
 
-async function setTabPanelState(tab, enabled, inAgentGroup = false) {
+async function setTabPanelState(tab, enabled) {
   try {
     if (enabled) {
       await chrome.sidePanel.setOptions({
@@ -63,19 +64,16 @@ async function setTabPanelState(tab, enabled, inAgentGroup = false) {
         path: PANEL_PATH,
         enabled: true
       });
-      await chrome.action.setTitle({
-        tabId: tab.id,
-        title: inAgentGroup
-          ? 'Open ChatGPT Web Agent'
-          : 'Start ChatGPT Web Agent on this website'
-      });
+      await chrome.action.setTitle({ tabId: tab.id, title: 'Open ChatGPT Web Agent' });
       return;
     }
 
     await chrome.sidePanel.setOptions({ tabId: tab.id, enabled: false });
     await chrome.action.setTitle({
       tabId: tab.id,
-      title: 'ChatGPT Web Agent is unavailable on this page'
+      title: isEligibleWebsiteTab(tab)
+        ? 'Start ChatGPT Web Agent on this website'
+        : 'ChatGPT Web Agent is unavailable on this page'
     });
   } catch {}
 }
@@ -86,18 +84,12 @@ async function closePanelsOutsideActiveGroup(status, tabs) {
 
   await Promise.allSettled(activeTabs.map(async (tab) => {
     if (enabledTabIds.has(Number(tab.id))) return;
-    if (pendingUserGestureTabs.has(Number(tab.id))) return;
+
+    // Close both possible contexts. A panel opened by an older extension version
+    // may still be a global/window panel; a newer one may be tab-specific.
     await closePanelForTab(tab.id);
     await closePanelInWindow(tab.windowId);
   }));
-}
-
-async function closeIfOutsideActiveGroup(tabId, windowId) {
-  const status = await getAgentGroupStatus().catch(() => ({ active: false, tabs: [] }));
-  const ids = groupTabIds(status);
-  if (ids.has(Number(tabId)) || pendingUserGestureTabs.has(Number(tabId))) return;
-  await closePanelForTab(tabId);
-  await closePanelInWindow(windowId);
 }
 
 export async function syncSidePanelVisibility() {
@@ -107,20 +99,18 @@ export async function syncSidePanelVisibility() {
   ]);
 
   await disableGlobalPanelDefault();
-  const agentTabIds = groupTabIds(status);
+
+  const enabledTabIds = groupTabIds(status);
 
   await Promise.allSettled(
-    tabs.filter((tab) => tab.id).map((tab) => {
-      const eligible = isEligibleWebsiteTab(tab);
-      return setTabPanelState(tab, eligible, agentTabIds.has(Number(tab.id)));
-    })
+    tabs.filter((tab) => tab.id).map((tab) => setTabPanelState(tab, enabledTabIds.has(Number(tab.id))))
   );
 
   await closePanelsOutsideActiveGroup(status, tabs);
 
   return {
     groupId: status?.groupId ?? null,
-    enabledTabIds: [...agentTabIds]
+    enabledTabIds: [...enabledTabIds]
   };
 }
 
@@ -143,16 +133,11 @@ async function focusExistingAgentGroup(status) {
     || (status.tabs || [])[0];
   if (!preferred?.id) return false;
 
-  await ensureChatGptForGroup(status.groupId, {
-    forceNew: false,
-    active: false,
-    windowId: status.windowId
-  }).catch(() => {});
-
   const tab = await chrome.tabs.get(preferred.id);
-  await setTabPanelState(tab, true, true);
   await chrome.tabs.update(tab.id, { active: true });
   await chrome.windows.update(tab.windowId, { focused: true });
+  await setTabPanelState(tab, true);
+  await chrome.sidePanel.open({ tabId: tab.id });
   return true;
 }
 
@@ -168,7 +153,7 @@ async function handleActionClick(tab) {
     const runState = await getRunningState();
     if (runState && ACTIVE_RUN_STATUSES.has(String(runState.status || '')) && currentStatus?.active) {
       await focusExistingAgentGroup(currentStatus);
-      return currentStatus;
+      return;
     }
   }
 
@@ -176,56 +161,15 @@ async function handleActionClick(tab) {
     ? await activateAgentGroupForTab(tab.id, { forceNewIfOutside: false })
     : await activateAgentGroupForTab(tab.id, { forceNewIfOutside: true });
 
-  // A newly started browser workspace gets a fresh ChatGPT reasoning tab.
-  // Reopening the same Agent group reuses its bound ChatGPT tab if it still exists.
-  await ensureChatGptForGroup(nextStatus.groupId, {
-    forceNew: !alreadyInActiveGroup,
-    active: false,
-    windowId: nextStatus.windowId
-  });
-
   await syncSidePanelVisibility();
+  const refreshed = await chrome.tabs.get(tab.id);
+  await setTabPanelState(refreshed, true);
+  await chrome.sidePanel.open({ tabId: tab.id });
+
   return nextStatus;
 }
 
-function openPanelFromUserGesture(tab) {
-  if (!isEligibleWebsiteTab(tab)) return;
-
-  const tabId = Number(tab.id);
-  pendingUserGestureTabs.add(tabId);
-
-  chrome.sidePanel.setOptions({
-    tabId,
-    path: PANEL_PATH,
-    enabled: true
-  }).catch(() => {});
-
-  try {
-    const opening = chrome.sidePanel.open({ tabId });
-    if (opening?.catch) {
-      opening.catch((error) => console.error('Failed to open scoped side panel from user gesture:', error));
-    }
-  } catch (error) {
-    console.error('Failed to open scoped side panel from user gesture:', error);
-  }
-
-  handleActionClick(tab)
-    .catch(async (error) => {
-      console.error('Failed to prepare scoped side panel:', error);
-      await closePanelForTab(tabId);
-      if (tab.windowId != null) await closePanelInWindow(tab.windowId);
-    })
-    .finally(() => {
-      setTimeout(() => {
-        pendingUserGestureTabs.delete(tabId);
-        scheduleSync(0);
-      }, 500);
-    });
-}
-
 async function enforceOpenedPanelScope(info) {
-  if (info?.tabId != null && pendingUserGestureTabs.has(Number(info.tabId))) return;
-
   const status = await getAgentGroupStatus().catch(() => ({ active: false, tabs: [] }));
   const enabledTabIds = groupTabIds(status);
 
@@ -237,6 +181,8 @@ async function enforceOpenedPanelScope(info) {
     return;
   }
 
+  // A panel with no tabId is a global/window panel. Global panels are never part
+  // of an Agent group, so close legacy/stale instances immediately.
   if (info?.windowId != null) await closePanelInWindow(info.windowId);
 }
 
@@ -247,13 +193,10 @@ export async function installTabScopedSidePanel() {
   await configureScopedBehavior();
 
   chrome.action.onClicked.addListener((tab) => {
-    openPanelFromUserGesture(tab);
+    handleActionClick(tab).catch((error) => console.error('Failed to open scoped side panel:', error));
   });
 
-  chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
-    closeIfOutsideActiveGroup(tabId, windowId).catch(() => {});
-    scheduleSync(0);
-  });
+  chrome.tabs.onActivated.addListener(() => scheduleSync(0));
   chrome.tabs.onCreated.addListener(() => scheduleSync());
   chrome.tabs.onRemoved.addListener(() => scheduleSync());
   chrome.tabs.onUpdated.addListener((_tabId, changeInfo) => {

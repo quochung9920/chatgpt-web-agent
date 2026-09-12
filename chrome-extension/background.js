@@ -4,7 +4,6 @@ import { assertTabInAgentGroup, getPreferredAgentTab } from './tab-group-session
 let socket = null;
 let reconnectTimer = null;
 let connectionGeneration = 0;
-let installed = false;
 
 const attachedTabs = new Set();
 const debugBuffers = new Map();
@@ -175,7 +174,7 @@ async function connect() {
   nextSocket.onclose = () => {
     if (generation !== connectionGeneration) return;
     if (socket === nextSocket) socket = null;
-    reconnectTimer = setTimeout(() => connect().catch(() => {}), 3000);
+    reconnectTimer = setTimeout(connect, 3000);
   };
 
   nextSocket.onerror = () => {
@@ -183,11 +182,11 @@ async function connect() {
   };
 }
 
-function handleDebuggerDetach(source) {
+chrome.debugger.onDetach.addListener((source) => {
   if (source.tabId) attachedTabs.delete(source.tabId);
-}
+});
 
-function handleDebuggerEvent(source, method, params) {
+chrome.debugger.onEvent.addListener((source, method, params) => {
   if (!source.tabId || !attachedTabs.has(source.tabId)) return;
   const buffer = getDebugBuffer(source.tabId);
 
@@ -230,27 +229,15 @@ function handleDebuggerEvent(source, method, params) {
       fromServiceWorker: Boolean(params.response?.fromServiceWorker)
     });
   }
-}
+});
 
-function handleStorageChanged(changes) {
-  if (changes.serverUrl || changes.agentId || changes.agentToken) connect().catch(() => {});
-}
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.serverUrl || changes.agentId || changes.agentToken) connect();
+});
 
-function handleTabRemoved(tabId) {
+chrome.tabs.onRemoved.addListener((tabId) => {
   attachedTabs.delete(tabId);
   debugBuffers.delete(tabId);
-}
+});
 
-export function installRemoteBackground() {
-  if (installed) return;
-  installed = true;
-
-  chrome.debugger.onDetach.addListener(handleDebuggerDetach);
-  chrome.debugger.onEvent.addListener(handleDebuggerEvent);
-  chrome.storage.onChanged.addListener(handleStorageChanged);
-  chrome.tabs.onRemoved.addListener(handleTabRemoved);
-
-  connect().catch((error) => {
-    console.error('Remote background connect failed:', error);
-  });
-}
+connect();

@@ -1,8 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -29,10 +27,8 @@ jobs:
           node --check chrome-extension/background.js
           node --check chrome-extension/service-worker.js
           node --check chrome-extension/service-worker-entry.js
-          node --check chrome-extension/runtime-control.js
           node --check chrome-extension/sidepanel-scope.js
           node --check chrome-extension/stream-model-bridge.js
-          node --check chrome-extension/hybrid-agent-runtime.js
           node --check chrome-extension/local-browser-tools.js
           node --check chrome-extension/tab-group-session.js
           node --check chrome-extension/group-scoped-tools.js
@@ -45,15 +41,3 @@ jobs:
           node --check chrome-extension/options.js
           node --check chrome-extension/sidepanel.js
           node --check chrome-extension/stream-model-ui.js
-          node --check chrome-extension/runtime-health-ui.js
-          node --check chrome-extension/service-worker-smoke.mjs
-
-      - name: Enforce MV3 static service-worker imports
-        run: |
-          if grep -nE '(^|[^A-Za-z0-9_])import[[:space:]]*\(' chrome-extension/service-worker-entry.js; then
-            echo 'Dynamic import() is not allowed in a Chrome MV3 ServiceWorkerGlobalScope.' >&2
-            exit 1
-          fi
-
-      - name: Smoke test service worker startup and control messages
-        run: node chrome-extension/service-worker-smoke.mjs

@@ -6,7 +6,6 @@ const approveButton = document.querySelector('#approveAction');
 const denyButton = document.querySelector('#denyAction');
 
 let pendingApprovalId = null;
-let pendingResponseType = 'agent.approval';
 
 async function runtimeRequest(type, payload = {}) {
   const response = await chrome.runtime.sendMessage({ type, ...payload });
@@ -16,7 +15,6 @@ async function runtimeRequest(type, payload = {}) {
 
 function hideApproval() {
   pendingApprovalId = null;
-  pendingResponseType = 'agent.approval';
   approvalCard.classList.add('hidden');
   approveButton.disabled = false;
   denyButton.disabled = false;
@@ -24,7 +22,6 @@ function hideApproval() {
 
 function showApproval(event) {
   pendingApprovalId = event.approvalId;
-  pendingResponseType = event.responseType || 'agent.approval';
   approvalTitle.textContent = event.risk === 'high' ? 'Sensitive action requires approval' : 'Approve browser action';
   approvalDetail.textContent = `${event.tool || 'Browser action'}${event.detail ? ` — ${event.detail}` : ''}`;
   approvalCard.classList.remove('hidden');
@@ -54,11 +51,10 @@ modeSelect.addEventListener('change', async () => {
 approveButton.addEventListener('click', async () => {
   if (!pendingApprovalId) return;
   const approvalId = pendingApprovalId;
-  const responseType = pendingResponseType;
   approveButton.disabled = true;
   denyButton.disabled = true;
   try {
-    await runtimeRequest(responseType, { approvalId, allow: true });
+    await runtimeRequest('agent.approval', { approvalId, allow: true });
     hideApproval();
   } catch {
     approveButton.disabled = false;
@@ -69,11 +65,10 @@ approveButton.addEventListener('click', async () => {
 denyButton.addEventListener('click', async () => {
   if (!pendingApprovalId) return;
   const approvalId = pendingApprovalId;
-  const responseType = pendingResponseType;
   approveButton.disabled = true;
   denyButton.disabled = true;
   try {
-    await runtimeRequest(responseType, { approvalId, allow: false });
+    await runtimeRequest('agent.approval', { approvalId, allow: false });
     hideApproval();
   } catch {
     approveButton.disabled = false;
@@ -86,7 +81,7 @@ chrome.runtime.onMessage.addListener((message) => {
   const event = message.event;
   if (event.kind === 'approval_required') showApproval(event);
   if (['approval_granted', 'blocked', 'final', 'stopped'].includes(event.kind)) {
-    hideApproval();
+    if (!event.approvalId || event.approvalId === pendingApprovalId || event.kind !== 'approval_required') hideApproval();
   }
 });
 

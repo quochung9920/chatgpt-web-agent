@@ -53,7 +53,7 @@
     <section class="agent-controls-card">
       <div>
         <div class="control-title">Browser permissions</div>
-        <div class="control-copy">Hybrid Vision + DOM + virtual CDP input. High-risk actions require approval.</div>
+        <div class="control-copy">High-risk actions always require approval.</div>
       </div>
       <select id="permissionMode" aria-label="Browser permission mode">
         <option value="auto">Automatically approve</option>
@@ -64,7 +64,7 @@
 
     <section class="chat-session-bar">
       <select id="chatgptTabSelect" aria-label="ChatGPT conversation tab">
-        <option value="">Starting dedicated ChatGPT…</option>
+        <option value="">Finding ChatGPT…</option>
       </select>
       <button id="newChat" class="secondary small">New chat</button>
       <button id="openChatgpt" class="secondary small">Open tab</button>
@@ -85,8 +85,8 @@
     <section id="agentActivity" class="agent-activity hidden" aria-live="polite">
       <div class="agent-activity-head">
         <div>
-          <div class="agent-activity-title">Hybrid agent is working</div>
-          <div id="agentActivityStatus" class="agent-activity-status">Preparing screenshot-first browser context…</div>
+          <div class="agent-activity-title">Agent is working</div>
+          <div id="agentActivityStatus" class="agent-activity-status">Preparing browser context…</div>
         </div>
         <button id="stopAgent" class="stop-button">Stop</button>
       </div>
@@ -96,32 +96,31 @@
     <section id="chatArea" class="chat-area" aria-live="polite">
       <div id="emptyState" class="empty-state">
         <div class="empty-icon">✦</div>
-        <div class="empty-title">Chat with your hybrid browser agent</div>
-        <p>It sees with screenshots, uses DOM/accessibility when useful, falls back to virtual CDP clicks for canvas/custom apps, and never takes over your Windows mouse.</p>
+        <div class="empty-title">Chat with your browser agent</div>
+        <p>The agent observes, acts and verifies inside the orange ChatGPT Agent tab group. New sites opened by the agent remain inside that group.</p>
       </div>
       <div id="messages" class="messages"></div>
       <div id="thinking" class="thinking hidden">
         <span></span><span></span><span></span>
-        <em>Agent is seeing, acting and verifying in Chrome…</em>
+        <em>Agent is observing and working in Chrome…</em>
       </div>
     </section>
 
     <section class="composer-shell">
       <div id="chatError" class="chat-error hidden"></div>
-      <textarea id="prompt" rows="1" placeholder="Tell the hybrid browser agent what to do…" aria-label="Agent task"></textarea>
+      <textarea id="prompt" rows="1" placeholder="Tell the agent what to do in this tab group…" aria-label="Agent task"></textarea>
       <div class="composer-actions">
         <div id="composerHint" class="composer-hint">Enter to run · Shift+Enter for newline</div>
-        <button id="send" class="send-button" aria-label="Run hybrid agent task">↑</button>
+        <button id="send" class="send-button" aria-label="Run agent task">↑</button>
       </div>
     </section>
 
     <footer class="footer">
       <button id="syncChat" class="footer-button">Sync ChatGPT</button>
       <span id="agentId">desktop-chrome</span>
-      <span>v0.11.5</span>
+      <span>v0.10.0</span>
     </footer>
   </main>
-  <script src="runtime-health-ui.js"></script>
   <script src="group-ui.js"></script>
   <script src="permission-ui.js"></script>
   <script src="sidepanel.js"></script>

@@ -45,33 +45,53 @@ async function runtimeRequest(type, payload = {}) {
 }
 
 function setError(message = '') {
-  chatError.textContent = message || '';
-  chatError.classList.toggle('hidden', !message);
+  if (!message) {
+    chatError.textContent = '';
+    chatError.classList.add('hidden');
+    return;
+  }
+  chatError.textContent = message;
+  chatError.classList.remove('hidden');
 }
 
 function scrollChatToBottom() {
   requestAnimationFrame(() => {
     const chatArea = document.querySelector('#chatArea');
-    if (chatArea) chatArea.scrollTop = chatArea.scrollHeight;
+    chatArea.scrollTop = chatArea.scrollHeight;
   });
 }
 
 function isInternalAgentMessage(item) {
   const text = String(item?.text || '').trim();
-  return text.startsWith('[WEB_AGENT_SYSTEM]')
-    || text.startsWith('[WEB_AGENT_TOOL_RESULT]')
-    || text.startsWith('[WEB_AGENT_RESULT]');
+  return text.startsWith('[WEB_AGENT_SYSTEM]') || text.startsWith('[WEB_AGENT_TOOL_RESULT]');
 }
 
 function stripAgentProtocol(text) {
-  return String(text || '')
-    .replace(/<web_agent>[\s\S]*?<\/web_agent>/gi, '')
-    .replace(/<web_agent>[\s\S]*$/gi, '')
-    .trim();
+  return String(text || '').replace(/<web_agent>[\s\S]*?<\/web_agent>/gi, '').trim();
 }
 
 function conversationSignature(items) {
   return items.map((item) => `${item.role}:${item.text}`).join('\n---\n');
+}
+
+function renderConversation(items, force = false) {
+  const normalized = Array.isArray(items)
+    ? items
+        .filter((item) => item && ['user', 'assistant'].includes(item.role) && String(item.text || '').trim())
+        .filter((item) => !isInternalAgentMessage(item))
+        .map((item) => ({ ...item, text: stripAgentProtocol(item.text) }))
+        .filter((item) => item.text)
+    : [];
+  const signature = conversationSignature(normalized);
+  if (!force && signature === lastConversationSignature) return;
+
+  conversation = normalized;
+  lastConversationSignature = signature;
+  messagesEl.replaceChildren();
+  emptyState.classList.toggle('hidden', conversation.length > 0);
+
+  for (const item of conversation) appendRenderedMessage(item.role, item.text);
+  scrollChatToBottom();
 }
 
 function appendRenderedMessage(role, text, className = '') {
@@ -91,26 +111,6 @@ function appendRenderedMessage(role, text, className = '') {
   emptyState.classList.add('hidden');
 }
 
-function renderConversation(items, force = false) {
-  const normalized = Array.isArray(items)
-    ? items
-        .filter((item) => item && ['user', 'assistant'].includes(item.role) && String(item.text || '').trim())
-        .filter((item) => !isInternalAgentMessage(item))
-        .map((item) => ({ ...item, text: stripAgentProtocol(item.text) }))
-        .filter((item) => item.text)
-    : [];
-
-  const signature = conversationSignature(normalized);
-  if (!force && signature === lastConversationSignature) return;
-
-  conversation = normalized;
-  lastConversationSignature = signature;
-  messagesEl.replaceChildren();
-  emptyState.classList.toggle('hidden', conversation.length > 0);
-  for (const item of conversation) appendRenderedMessage(item.role, item.text);
-  scrollChatToBottom();
-}
-
 function appendLocalMessage(role, text, className = '') {
   appendRenderedMessage(role, text, className);
   scrollChatToBottom();
@@ -125,13 +125,13 @@ function updateComposerState(ready) {
   promptEl.disabled = !ready || sending;
   sendButton.disabled = !ready || sending || !promptEl.value.trim();
   if (!ready) promptEl.placeholder = 'Open and sign in to ChatGPT first…';
-  else if (sending) promptEl.placeholder = 'Hybrid agent is seeing, acting and verifying…';
-  else promptEl.placeholder = 'Tell the hybrid browser agent what to do…';
+  else if (sending) promptEl.placeholder = 'Agent is working in Chrome…';
+  else promptEl.placeholder = 'Tell the agent what to do in Chrome…';
 }
 
 function resetAgentActivity() {
   agentSteps.replaceChildren();
-  agentActivityStatus.textContent = 'Preparing screenshot-first browser context…';
+  agentActivityStatus.textContent = 'Preparing browser context…';
   agentActivity.classList.remove('hidden');
   stopAgentButton.disabled = false;
 }
@@ -146,7 +146,6 @@ function addAgentStep(event) {
   if (event.kind === 'tool_result') mark.textContent = event.ok === false ? '×' : '✓';
   else if (event.kind === 'final') mark.textContent = '✓';
   else if (event.kind === 'reasoning') mark.textContent = '•';
-  else if (event.kind === 'observe') mark.textContent = '◉';
   else mark.textContent = '→';
 
   const text = document.createElement('span');
@@ -154,9 +153,8 @@ function addAgentStep(event) {
   row.append(mark, text);
   agentSteps.append(row);
 
-  while (agentSteps.children.length > 14) agentSteps.firstElementChild?.remove();
+  while (agentSteps.children.length > 12) agentSteps.firstElementChild?.remove();
   agentActivityStatus.textContent = event.message || 'Working…';
-  agentSteps.scrollTop = agentSteps.scrollHeight;
 }
 
 async function refreshServerStatus() {
@@ -211,7 +209,7 @@ function populateChatGptTabs(tabs, selectedId) {
   if (!tabs?.length) {
     const option = document.createElement('option');
     option.value = '';
-    option.textContent = 'Starting dedicated ChatGPT…';
+    option.textContent = 'No ChatGPT tab';
     tabSelect.append(option);
     tabSelect.disabled = true;
     return;
@@ -232,19 +230,14 @@ function populateChatGptTabs(tabs, selectedId) {
 async function refreshChatGptState({ syncConversation = true } = {}) {
   chatgptDot.className = 'status-dot checking';
   chatgptBadge.textContent = 'ChatGPT';
-
   try {
-    // Do not trust a stale local tab id after switching Agent groups. Runtime
-    // control resolves the ChatGPT tab bound to the currently active group.
-    const state = await runtimeRequest('chatgpt.status', {
-      includeConversation: syncConversation
-    });
+    const state = await runtimeRequest('chatgpt.status', { tabId: selectedChatGptTabId });
     populateChatGptTabs(state.tabs || [], state.selectedTabId);
     selectedChatGptTabId = state.selectedTabId || null;
 
     if (!state.open) {
       chatgptDot.className = 'status-dot offline';
-      chatgptBadge.textContent = 'Starting ChatGPT…';
+      chatgptBadge.textContent = 'ChatGPT closed';
       updateComposerState(false);
       if (!sending) renderConversation([], true);
       return state;
@@ -252,18 +245,12 @@ async function refreshChatGptState({ syncConversation = true } = {}) {
 
     if (!state.bridgeReady) {
       chatgptDot.className = 'status-dot offline';
-      if (state.error === 'chatgpt_sign_in_required') {
-        chatgptBadge.textContent = 'Sign in required';
-        setError('A dedicated ChatGPT tab was created. Open it and sign in once.');
-      } else {
-        chatgptBadge.textContent = 'ChatGPT not ready';
-        if (state.error) setError(`ChatGPT bridge: ${state.error}`);
-      }
+      chatgptBadge.textContent = 'ChatGPT not ready';
       updateComposerState(false);
+      if (state.error) setError(`ChatGPT bridge: ${state.error}`);
       return state;
     }
 
-    setError('');
     chatgptDot.className = 'status-dot online';
     chatgptBadge.textContent = 'ChatGPT ready';
     if (!sending) updateComposerState(true);
@@ -284,7 +271,6 @@ async function syncChat() {
     await refreshChatGptState();
     if (!selectedChatGptTabId) return;
   }
-
   try {
     const result = await runtimeRequest('chatgpt.sync', { tabId: selectedChatGptTabId, limit: 40 });
     renderConversation(result.conversation || [], true);
@@ -293,7 +279,7 @@ async function syncChat() {
   }
 }
 
-async function runHybridTask() {
+async function runAgentTask() {
   const text = promptEl.value.trim();
   if (!text || sending) return;
 
@@ -308,27 +294,15 @@ async function runHybridTask() {
   scrollChatToBottom();
 
   try {
-    // Resolve the dedicated reasoning tab immediately before every run. This
-    // prevents a newly-switched group from accidentally using the prior group's chat.
-    const chatState = await runtimeRequest('chatgpt.status', { includeConversation: false });
-    if (!chatState?.selectedTabId) throw new Error('chatgpt_tab_not_found');
-    if (!chatState.bridgeReady) {
-      throw new Error(chatState.error === 'chatgpt_sign_in_required'
-        ? 'Sign in to the dedicated ChatGPT tab first.'
-        : (chatState.error || 'chatgpt_bridge_unavailable'));
-    }
-    selectedChatGptTabId = chatState.selectedTabId;
-
-    const result = await runtimeRequest('hybrid.run', {
+    const result = await runtimeRequest('agent.run', {
       tabId: selectedChatGptTabId,
       task: text
     });
     selectedChatGptTabId = result.tabId || selectedChatGptTabId;
     thinking.classList.add('hidden');
-
     const finalText = stripAgentProtocol(result.text || '').trim() || 'Task complete.';
     appendLocalMessage('assistant', finalText);
-    agentActivityStatus.textContent = `Finished · ${result.steps ?? 0} browser step${result.steps === 1 ? '' : 's'} · ${result.rounds ?? 0} ChatGPT round${result.rounds === 1 ? '' : 's'}`;
+    agentActivityStatus.textContent = `Finished after ${result.steps ?? 0} browser step${result.steps === 1 ? '' : 's'}`;
     stopAgentButton.disabled = true;
   } catch (error) {
     thinking.classList.add('hidden');
@@ -353,13 +327,13 @@ async function refreshAll() {
 document.querySelector('#settings').addEventListener('click', () => chrome.runtime.openOptionsPage());
 document.querySelector('#refresh').addEventListener('click', refreshAll);
 document.querySelector('#syncChat').addEventListener('click', syncChat);
-sendButton.addEventListener('click', runHybridTask);
+document.querySelector('#send').addEventListener('click', runAgentTask);
 
 stopAgentButton.addEventListener('click', async () => {
   if (!sending) return;
   stopAgentButton.disabled = true;
   agentActivityStatus.textContent = 'Stopping…';
-  try { await runtimeRequest('hybrid.stop'); } catch {}
+  try { await runtimeRequest('agent.stop'); } catch {}
 });
 
 document.querySelector('#newChat').addEventListener('click', async () => {
@@ -408,7 +382,7 @@ promptEl.addEventListener('input', () => {
 promptEl.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
-    runHybridTask();
+    runAgentTask();
   }
 });
 
