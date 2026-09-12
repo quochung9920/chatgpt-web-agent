@@ -27,6 +27,7 @@ jobs:
           node --check chrome-extension/background.js
           node --check chrome-extension/service-worker.js
           node --check chrome-extension/service-worker-entry.js
+          node --check chrome-extension/runtime-control.js
           node --check chrome-extension/sidepanel-scope.js
           node --check chrome-extension/stream-model-bridge.js
           node --check chrome-extension/hybrid-agent-runtime.js
