@@ -14,6 +14,8 @@ const READ_ONLY_TOOLS = new Set([
   'page.elements',
   'page.elementAt',
   'page.observe',
+  'page.look',
+  'page.peekDom',
   'page.find',
   'page.viewport.get',
   'page.screenshot'
@@ -104,7 +106,7 @@ export function shouldObserveAfter(tool) {
     'tabs.open', 'tabs.switch', 'tabs.close',
     'tab.navigate', 'tab.reload', 'tab.back', 'tab.forward',
     'page.click', 'page.clickText', 'page.doubleClick', 'page.rightClick',
-    'page.type', 'page.typeByLabel', 'page.key', 'page.hotkey', 'page.scroll', 'page.drag',
+    'page.type', 'page.typeAt', 'page.typeByLabel', 'page.key', 'page.hotkey', 'page.scroll', 'page.drag',
     'page.focus', 'page.selectOption', 'page.check', 'page.upload',
     'page.viewport.set', 'page.viewport.clear'
   ]).has(String(tool || ''));
@@ -115,7 +117,7 @@ export function shouldCaptureVisualAfter(tool) {
     'tabs.open', 'tabs.switch',
     'tab.navigate', 'tab.reload', 'tab.back', 'tab.forward',
     'page.click', 'page.clickText', 'page.doubleClick',
-    'page.type', 'page.typeByLabel', 'page.key', 'page.hotkey', 'page.scroll', 'page.drag',
+    'page.type', 'page.typeAt', 'page.typeByLabel', 'page.key', 'page.hotkey', 'page.scroll', 'page.drag',
     'page.selectOption', 'page.check', 'page.upload',
     'page.viewport.set', 'page.viewport.clear'
   ]).has(String(tool || ''));
