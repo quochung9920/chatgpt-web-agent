@@ -26,6 +26,8 @@ jobs:
         run: |
           node --check chrome-extension/background.js
           node --check chrome-extension/service-worker.js
+          node --check chrome-extension/service-worker-entry.js
+          node --check chrome-extension/sidepanel-scope.js
           node --check chrome-extension/local-browser-tools.js
           node --check chrome-extension/tab-group-session.js
           node --check chrome-extension/group-scoped-tools.js
