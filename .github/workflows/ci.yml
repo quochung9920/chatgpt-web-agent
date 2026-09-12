@@ -48,5 +48,12 @@ jobs:
           node --check chrome-extension/runtime-health-ui.js
           node --check chrome-extension/service-worker-smoke.mjs
 
+      - name: Enforce MV3 static service-worker imports
+        run: |
+          if grep -nE '(^|[^A-Za-z0-9_])import[[:space:]]*\(' chrome-extension/service-worker-entry.js; then
+            echo 'Dynamic import() is not allowed in a Chrome MV3 ServiceWorkerGlobalScope.' >&2
+            exit 1
+          fi
+
       - name: Smoke test service worker startup and control messages
         run: node chrome-extension/service-worker-smoke.mjs
