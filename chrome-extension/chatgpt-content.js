@@ -21,8 +21,7 @@
       'form [contenteditable="true"]'
     ];
     for (const selector of selectors) {
-      const matches = Array.from(document.querySelectorAll(selector));
-      const visible = matches.find(isVisible);
+      const visible = Array.from(document.querySelectorAll(selector)).find(isVisible);
       if (visible) return visible;
     }
     return null;
@@ -37,24 +36,15 @@
       'form button[type="submit"]'
     ];
     for (const selector of selectors) {
-      const matches = Array.from(document.querySelectorAll(selector));
-      const visible = matches.find((button) => isVisible(button) && !button.disabled);
+      const visible = Array.from(document.querySelectorAll(selector)).find((button) => isVisible(button) && !button.disabled);
       if (visible) return visible;
     }
     return null;
   }
 
   function findStopButton() {
-    const selectors = [
-      'button[data-testid="stop-button"]',
-      'button[aria-label*="Stop"]',
-      'button[aria-label*="stop"]'
-    ];
-    for (const selector of selectors) {
-      const matches = Array.from(document.querySelectorAll(selector));
-      if (matches.some(isVisible)) return true;
-    }
-    return false;
+    const selectors = ['button[data-testid="stop-button"]', 'button[aria-label*="Stop"]', 'button[aria-label*="stop"]'];
+    return selectors.some((selector) => Array.from(document.querySelectorAll(selector)).some(isVisible));
   }
 
   function getRoleNodes() {
@@ -74,11 +64,10 @@
   }
 
   function getConversation(limit = 20) {
-    const nodes = getRoleNodes().slice(-Math.max(1, Math.min(Number(limit || 20), 50)));
-    return nodes.map((node) => ({
-      role: node.getAttribute('data-message-author-role'),
-      text: cleanMessageText(node)
-    })).filter((item) => item.text);
+    return getRoleNodes()
+      .slice(-Math.max(1, Math.min(Number(limit || 20), 50)))
+      .map((node) => ({ role: node.getAttribute('data-message-author-role'), text: cleanMessageText(node) }))
+      .filter((item) => item.text);
   }
 
   function nativeValueSetter(element) {
@@ -94,16 +83,13 @@
     const composer = findComposer();
     if (!composer) throw new Error('chatgpt_composer_not_found');
     composer.focus();
-
     if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
       const setter = nativeValueSetter(composer);
-      if (setter) setter.call(composer, text);
-      else composer.value = text;
+      if (setter) setter.call(composer, text); else composer.value = text;
       composer.dispatchEvent(new Event('input', { bubbles: true }));
       composer.dispatchEvent(new Event('change', { bubbles: true }));
       return composer;
     }
-
     if (composer.isContentEditable) {
       const selection = window.getSelection();
       const range = document.createRange();
@@ -111,20 +97,11 @@
       selection.removeAllRanges();
       selection.addRange(range);
       let inserted = false;
-      try {
-        inserted = document.execCommand('insertText', false, text);
-      } catch {
-        inserted = false;
-      }
+      try { inserted = document.execCommand('insertText', false, text); } catch { inserted = false; }
       if (!inserted) composer.textContent = text;
-      composer.dispatchEvent(new InputEvent('input', {
-        bubbles: true,
-        inputType: 'insertText',
-        data: text
-      }));
+      composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
       return composer;
     }
-
     throw new Error('chatgpt_composer_not_editable');
   }
 
@@ -132,25 +109,11 @@
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
       const button = findSendButton();
-      if (button) {
-        button.click();
-        return;
-      }
+      if (button) { button.click(); return; }
       await sleep(100);
     }
-
-    composer.dispatchEvent(new KeyboardEvent('keydown', {
-      key: 'Enter',
-      code: 'Enter',
-      bubbles: true,
-      cancelable: true
-    }));
-    composer.dispatchEvent(new KeyboardEvent('keyup', {
-      key: 'Enter',
-      code: 'Enter',
-      bubbles: true,
-      cancelable: true
-    }));
+    composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+    composer.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
   }
 
   function dataUrlToFile(dataUrl, filename) {
@@ -163,20 +126,16 @@
   }
 
   function findFileInput() {
-    const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
-    return inputs.find((input) => !input.disabled) || null;
+    return Array.from(document.querySelectorAll('input[type="file"]')).find((input) => !input.disabled) || null;
   }
 
   async function revealFileInput() {
     let input = findFileInput();
     if (input) return input;
-
-    const buttons = Array.from(document.querySelectorAll('button'));
-    const attach = buttons.find((button) => {
+    const attach = Array.from(document.querySelectorAll('button')).find((button) => {
       const label = `${button.getAttribute('aria-label') || ''} ${button.title || ''} ${button.innerText || ''}`.toLowerCase();
       return /attach|upload|add photos|add files|file/.test(label) && isVisible(button);
     });
-
     if (attach) {
       attach.click();
       for (let i = 0; i < 20; i += 1) {
@@ -192,14 +151,12 @@
     if (!dataUrl) return { attached: false };
     const input = await revealFileInput();
     if (!input) throw new Error('chatgpt_file_input_not_found');
-
     const file = dataUrlToFile(dataUrl, filename);
     const transfer = new DataTransfer();
     transfer.items.add(file);
     input.files = transfer.files;
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
-
     await sleep(900);
     return { attached: true, name: file.name, size: file.size, type: file.type };
   }
@@ -208,13 +165,11 @@
     const deadline = Date.now() + Math.min(Math.max(Number(timeoutMs || 180000), 15000), 300000);
     let stableText = '';
     let stableSince = 0;
-
     while (Date.now() < deadline) {
       const assistants = getAssistantNodes();
       const latest = assistants.at(-1);
       const text = cleanMessageText(latest);
       const isNew = assistants.length > before.count || (text && text !== before.lastText);
-
       if (isNew && text) {
         if (text === stableText) {
           if (!stableSince) stableSince = Date.now();
@@ -222,15 +177,10 @@
           stableText = text;
           stableSince = Date.now();
         }
-
-        if (!findStopButton() && Date.now() - stableSince >= 1400) {
-          return { text, conversation: getConversation(30) };
-        }
+        if (!findStopButton() && Date.now() - stableSince >= 1400) return { text, conversation: getConversation(30) };
       }
-
       await sleep(350);
     }
-
     if (stableText) return { text: stableText, conversation: getConversation(30), timedOut: true };
     throw new Error('chatgpt_response_timeout');
   }
@@ -238,24 +188,21 @@
   async function sendPrompt(text, timeoutMs, imageDataUrl = '') {
     const prompt = String(text || '').trim();
     if (!prompt) throw new Error('empty_prompt');
-
     const assistants = getAssistantNodes();
-    const before = {
-      count: assistants.length,
-      lastText: cleanMessageText(assistants.at(-1))
-    };
+    const before = { count: assistants.length, lastText: cleanMessageText(assistants.at(-1)) };
 
     let attachment = { attached: false };
     let attachmentError = '';
     if (imageDataUrl) {
-      try {
-        attachment = await attachImage(imageDataUrl);
-      } catch (error) {
-        attachmentError = error?.message || String(error);
-      }
+      try { attachment = await attachImage(imageDataUrl); }
+      catch (error) { attachmentError = error?.message || String(error); }
     }
 
-    const composer = await setComposerText(prompt);
+    const effectivePrompt = imageDataUrl && attachmentError
+      ? `${prompt}\n\n[WEB_AGENT_NOTE] The screenshot attachment could not be added (${attachmentError}). Do not assume you saw the screenshot; rely on the DOM/accessibility observation and request another screenshot later if visual evidence is necessary.`
+      : prompt;
+
+    const composer = await setComposerText(effectivePrompt);
     await sleep(150);
     await submitComposer(composer);
     const response = await waitForAssistantResponse(before, timeoutMs);
@@ -264,31 +211,18 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || !String(message.type || '').startsWith('chatgpt.bridge.')) return;
-
     (async () => {
       switch (message.type) {
         case 'chatgpt.bridge.ping':
-          return {
-            ok: true,
-            href: location.href,
-            title: document.title,
-            composer: Boolean(findComposer()),
-            conversation: getConversation(12)
-          };
+          return { ok: true, href: location.href, title: document.title, composer: Boolean(findComposer()), conversation: getConversation(12) };
         case 'chatgpt.bridge.sync':
           return { ok: true, conversation: getConversation(message.limit || 30) };
         case 'chatgpt.bridge.send':
-          return {
-            ok: true,
-            ...(await sendPrompt(message.text, message.timeoutMs, message.imageDataUrl || ''))
-          };
+          return { ok: true, ...(await sendPrompt(message.text, message.timeoutMs, message.imageDataUrl || '')) };
         default:
           throw new Error('unsupported_bridge_message');
       }
-    })().then(sendResponse).catch((error) => {
-      sendResponse({ ok: false, error: error?.message || String(error) });
-    });
-
+    })().then(sendResponse).catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
     return true;
   });
 })();
