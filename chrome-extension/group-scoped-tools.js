@@ -49,6 +49,16 @@ async function scopeArgs(tool, args = {}) {
   return next;
 }
 
+function sanitizeScopedResult(tool, result) {
+  if (tool !== 'page.inspect' || !result || typeof result !== 'object') return result;
+  const attributes = { ...(result.attributes || {}) };
+  if (String(attributes.type || '').toLowerCase() === 'password') {
+    if ('value' in attributes) attributes.value = '[REDACTED_PASSWORD]';
+    return { ...result, text: '[REDACTED_PASSWORD_FIELD]', attributes };
+  }
+  return result;
+}
+
 export { LOCAL_AGENT_TOOLS, isLocalAgentTool };
 
 export async function executeLocalBrowserTool(tool, args = {}) {
@@ -97,7 +107,8 @@ export async function executeLocalBrowserTool(tool, args = {}) {
 
     default: {
       const scoped = await scopeArgs(tool, args);
-      return executeRawBrowserTool(tool, scoped);
+      const result = await executeRawBrowserTool(tool, scoped);
+      return sanitizeScopedResult(tool, result);
     }
   }
 }
